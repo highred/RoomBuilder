@@ -107,6 +107,7 @@ const roomName = document.querySelector<HTMLInputElement>("#roomName");
 const roomWidth = document.querySelector<HTMLInputElement>("#roomWidth");
 const roomDepth = document.querySelector<HTMLInputElement>("#roomDepth");
 const roomList = document.querySelector<HTMLElement>("#roomList");
+const buildingRoomList = document.querySelector<HTMLElement>("#buildingRoomList");
 const status = document.querySelector<HTMLElement>("#status");
 const perfFps = document.querySelector<HTMLElement>("#perfFps");
 const perfItems = document.querySelector<HTMLElement>("#perfItems");
@@ -209,6 +210,7 @@ document.querySelector<HTMLButtonElement>("#saveRoom")?.addEventListener("click"
   if (saved) {
     if (roomName) roomName.value = saved.name;
     renderRoomList(builder.getSavedRooms());
+    renderBuildingRoomList(builder.getSavedRooms());
     flash(`Updated ${saved.name}`);
   } else {
     flash("Room saved in this browser");
@@ -219,6 +221,7 @@ document.querySelector<HTMLButtonElement>("#saveNamedRoom")?.addEventListener("c
   const saved = builder.saveNamedRoom(roomName?.value ?? "");
   if (roomName) roomName.value = saved.name;
   renderRoomList(builder.getSavedRooms());
+  renderBuildingRoomList(builder.getSavedRooms());
   flash(`Saved ${saved.name}`);
 });
 document.querySelector<HTMLButtonElement>("#newRoom")?.addEventListener("click", () => {
@@ -230,7 +233,23 @@ document.querySelector<HTMLButtonElement>("#newRoom")?.addEventListener("click",
   renderCurrentRoomName();
   renderLightingControls();
   renderRoomList(builder.getSavedRooms());
+  renderBuildingRoomList(builder.getSavedRooms());
   flash(`New ${size.widthFeet} x ${size.depthFeet} ft room ready`);
+});
+document.querySelector<HTMLButtonElement>("#showBuilding")?.addEventListener("click", () => {
+  builder.showBuildingOverview(builder.getSavedRooms());
+  renderBuildingRoomList(builder.getSavedRooms());
+  zoomToBuildingView();
+  flash("Building outline enabled");
+});
+document.querySelector<HTMLButtonElement>("#hideBuilding")?.addEventListener("click", () => {
+  builder.hideBuildingOverview();
+  flash("Building outline hidden");
+});
+document.querySelector<HTMLButtonElement>("#refreshBuilding")?.addEventListener("click", () => {
+  builder.showBuildingOverview(builder.getSavedRooms());
+  renderBuildingRoomList(builder.getSavedRooms());
+  flash("Floorplan refreshed");
 });
 document.querySelector<HTMLButtonElement>("#copyShareLink")?.addEventListener("click", async () => {
   const room = builder.exportRoom(roomName?.value ?? "Shared room");
@@ -345,6 +364,7 @@ if (sharedRoom) {
 renderSelection(builder.selectedItem);
 renderAssetLibrary(builder.getAssets());
 renderRoomList(builder.getSavedRooms());
+renderBuildingRoomList(builder.getSavedRooms());
 renderRoomSize();
 renderCurrentRoomName();
 renderLightingControls();
@@ -547,6 +567,17 @@ function centerCameraOnSelection() {
   flash("Camera centered on selection");
 }
 
+function zoomToBuildingView() {
+  focusTween = {
+    start: performance.now(),
+    duration: 640,
+    fromTarget: controls.target.clone(),
+    toTarget: new THREE.Vector3(0, 0.45, 0),
+    fromPosition: camera.position.clone(),
+    toPosition: new THREE.Vector3(13.5, 14.5, 13.5),
+  };
+}
+
 function renderSelection(item: BuilderItem | null) {
   if (!selectedName || !selectedMeta) return;
   const selectionCount = builder.getSelectionCount();
@@ -655,6 +686,7 @@ function renderRoomList(rooms: SavedRoom[]) {
       renderRoomSize();
       renderLightingControls();
       renderRoomList(builder.getSavedRooms());
+      renderBuildingRoomList(builder.getSavedRooms());
       flash(`Loaded ${room.name}`);
     });
     const remove = document.createElement("button");
@@ -666,10 +698,48 @@ function renderRoomList(rooms: SavedRoom[]) {
       builder.deleteRoom(room.id);
       renderCurrentRoomName();
       renderRoomList(builder.getSavedRooms());
+      renderBuildingRoomList(builder.getSavedRooms());
+      builder.refreshBuildingOverview(builder.getSavedRooms());
       flash(`Deleted ${room.name}`);
     });
     row.append(button, remove);
     roomList.append(row);
+  }
+}
+
+function renderBuildingRoomList(rooms: SavedRoom[]) {
+  if (!buildingRoomList) return;
+  buildingRoomList.innerHTML = "";
+  if (!rooms.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "Save rooms first, then use this as a building navigator.";
+    buildingRoomList.append(empty);
+    return;
+  }
+  for (const room of rooms) {
+    const row = document.createElement("div");
+    row.className = "room-row";
+    const button = document.createElement("button");
+    button.className = "room-tile";
+    button.classList.toggle("active", room.id === builder.getCurrentRoomId());
+    button.type = "button";
+    button.innerHTML = `<span>${room.name}</span><small>${room.items.length} assets stored</small>`;
+    button.addEventListener("click", () => {
+      if (readOnlyMode) return;
+      const loaded = builder.loadNamedRoom(room.id);
+      if (!loaded) return;
+      if (roomName) roomName.value = loaded.name;
+      restoreShadowMode();
+      renderRoomSize();
+      renderLightingControls();
+      renderRoomList(builder.getSavedRooms());
+      renderBuildingRoomList(builder.getSavedRooms());
+      zoomToBuildingView();
+      flash(`Entered ${room.name}`);
+    });
+    row.append(button);
+    buildingRoomList.append(row);
   }
 }
 

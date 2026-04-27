@@ -305,6 +305,8 @@ export class RoomBuilder {
     ["right", 0],
   ]);
   private shellGroup = new THREE.Group();
+  private buildingGroup = new THREE.Group();
+  private buildingMode = false;
   private sunlightGroup = new THREE.Group();
   private sunLight?: any;
   private hemiLight?: any;
@@ -330,7 +332,7 @@ export class RoomBuilder {
 
     this.addLighting();
     this.addRoomShell();
-    this.scene.add(this.gridHelper, this.selectionBox);
+    this.scene.add(this.gridHelper, this.selectionBox, this.buildingGroup);
     this.assetLibrary = loadAssets();
     this.loadScene();
   }
@@ -373,6 +375,7 @@ export class RoomBuilder {
       this.currentRoomId = null;
       this.persist();
     }
+    this.refreshBuildingOverview(rooms);
     return rooms;
   }
 
@@ -406,6 +409,20 @@ export class RoomBuilder {
     return MAX_PLACEABLE_ITEMS;
   }
 
+  showBuildingOverview(rooms = loadRooms()) {
+    this.buildingMode = true;
+    this.rebuildBuildingOverview(rooms);
+  }
+
+  hideBuildingOverview() {
+    this.buildingMode = false;
+    this.buildingGroup.clear();
+  }
+
+  refreshBuildingOverview(rooms = loadRooms()) {
+    if (this.buildingMode) this.rebuildBuildingOverview(rooms);
+  }
+
   exportRoom(name = "Shared room"): SavedRoom {
     return {
       id: this.currentRoomId ?? crypto.randomUUID(),
@@ -424,6 +441,7 @@ export class RoomBuilder {
     this.rebuildRoomShell();
     for (const item of room.items ?? []) this.putItem(item);
     this.persist();
+    this.refreshBuildingOverview();
     return room;
   }
 
@@ -607,6 +625,7 @@ export class RoomBuilder {
     this.pushUndo();
     this.clearRoomContents();
     this.persist();
+    this.refreshBuildingOverview();
   }
 
   newRoom() {
@@ -617,6 +636,7 @@ export class RoomBuilder {
     this.rebuildRoomShell();
     this.seedShellObjectsFromStyle(false);
     this.persist();
+    this.refreshBuildingOverview();
     return this.getRoomSize();
   }
 
@@ -638,6 +658,7 @@ export class RoomBuilder {
     for (const item of demoItems()) this.putItem(item);
     this.seedShellObjectsFromStyle(false);
     this.persist();
+    this.refreshBuildingOverview();
   }
 
   saveNamedRoom(name: string) {
@@ -654,6 +675,7 @@ export class RoomBuilder {
     saveRooms(nextRooms);
     this.currentRoomId = room.id;
     this.persist();
+    this.refreshBuildingOverview(nextRooms);
     return room;
   }
 
@@ -670,8 +692,10 @@ export class RoomBuilder {
       items: [...this.items.values()].map((item) => serializeItem(item)),
       style: structuredClone(this.roomStyle),
     };
-    saveRooms([room, ...rooms.filter((entry) => entry.id !== this.currentRoomId)].slice(0, 24));
+    const nextRooms = [room, ...rooms.filter((entry) => entry.id !== this.currentRoomId)].slice(0, 24);
+    saveRooms(nextRooms);
     this.persist();
+    this.refreshBuildingOverview(nextRooms);
     return room;
   }
 
@@ -685,9 +709,11 @@ export class RoomBuilder {
       items: [...this.items.values()].map((item) => serializeItem(item)),
       style: structuredClone(this.roomStyle),
     };
-    saveRooms([room, ...rooms].slice(0, 24));
+    const nextRooms = [room, ...rooms].slice(0, 24);
+    saveRooms(nextRooms);
     this.currentRoomId = room.id;
     this.persist();
+    this.refreshBuildingOverview(nextRooms);
     return room;
   }
 
@@ -701,6 +727,7 @@ export class RoomBuilder {
     for (const item of room.items) this.putItem(item);
     this.currentRoomId = room.id;
     this.persist();
+    this.refreshBuildingOverview();
     return room;
   }
 
@@ -711,6 +738,7 @@ export class RoomBuilder {
     this.rebuildRoomShell();
     this.seedShellObjectsFromStyle(false);
     this.persist();
+    this.refreshBuildingOverview();
     return this.roomStyle;
   }
 
@@ -733,6 +761,7 @@ export class RoomBuilder {
     this.rebuildRoomShell();
     this.seedShellObjectsFromStyle(false);
     this.persist();
+    this.refreshBuildingOverview();
     return this.getRoomSize();
   }
 
@@ -1234,6 +1263,24 @@ export class RoomBuilder {
     }
   }
 
+  private rebuildBuildingOverview(rooms: SavedRoom[]) {
+    this.buildingGroup.clear();
+    const savedRooms = rooms.filter((room) => room.id !== this.currentRoomId);
+    const activeMetrics = roomMetrics(this.roomStyle);
+    const cellX = Math.max(5.6, activeMetrics.width + 1.3);
+    const cellZ = Math.max(4.6, activeMetrics.depth + 1.3);
+    const previewSlots = buildingPreviewSlots(savedRooms.length, cellX, cellZ);
+    for (const [index, room] of savedRooms.entries()) {
+      const slot = previewSlots[index];
+      const preview = makeBuildingRoomPreview(room, slot, false);
+      this.buildingGroup.add(preview);
+      const link = makeRoomConnector(slot);
+      if (link) this.buildingGroup.add(link);
+    }
+    const activeHalo = makeActiveRoomHalo(activeMetrics);
+    this.buildingGroup.add(activeHalo);
+  }
+
   private refreshSelectionBox() {
     if (!this.selectedIds.size) {
       this.selectionBox.visible = false;
@@ -1399,6 +1446,123 @@ function createWallGroup(target: any, wallGroups: Map<WallSide, any>, side: Wall
   wallGroups.set(side, group);
   target.add(group);
   return group;
+}
+
+function buildingPreviewSlots(count: number, cellX: number, cellZ: number) {
+  const slots: Vec2[] = [];
+  let ring = 1;
+  while (slots.length < count && ring < 12) {
+    for (let x = -ring; x <= ring && slots.length < count; x++) slots.push({ x: x * cellX, z: -ring * cellZ });
+    for (let z = -ring + 1; z <= ring && slots.length < count; z++) slots.push({ x: ring * cellX, z: z * cellZ });
+    for (let x = ring - 1; x >= -ring && slots.length < count; x--) slots.push({ x: x * cellX, z: ring * cellZ });
+    for (let z = ring - 1; z >= -ring + 1 && slots.length < count; z--) slots.push({ x: -ring * cellX, z: z * cellZ });
+    ring += 1;
+  }
+  return slots;
+}
+
+function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean) {
+  const style = normalizeRoomStyle(room.style);
+  const metrics = roomMetrics(style);
+  const group = new THREE.Group();
+  group.position.set(offset.x, 0, offset.z);
+  group.userData.roomId = room.id;
+  const floorMat = new THREE.MeshStandardMaterial({
+    color: active ? style.floor : "#252b28",
+    roughness: 0.78,
+    transparent: true,
+    opacity: active ? 0.7 : 0.62,
+  });
+  const wallMat = new THREE.MeshStandardMaterial({
+    color: active ? style.wallB : "#141817",
+    roughness: 0.82,
+    transparent: true,
+    opacity: active ? 0.46 : 0.52,
+  });
+  const trimMat = new THREE.MeshStandardMaterial({
+    color: active ? "#9bdab7" : "#4c5f56",
+    roughness: 0.7,
+    transparent: true,
+    opacity: active ? 0.9 : 0.72,
+  });
+  const floor = box(metrics.width, 0.07, metrics.depth, floorMat);
+  floor.position.y = -0.035;
+  floor.receiveShadow = false;
+  group.add(floor);
+  const left = box(0.1, 0.56, metrics.depth, wallMat);
+  left.position.set(metrics.leftX, 0.28, 0);
+  const right = box(0.1, 0.56, metrics.depth, wallMat);
+  right.position.set(metrics.rightX, 0.28, 0);
+  const back = box(metrics.width, 0.56, 0.1, wallMat);
+  back.position.set(0, 0.28, metrics.backZ);
+  const front = box(metrics.width, 0.56, 0.1, wallMat);
+  front.position.set(0, 0.28, metrics.frontZ);
+  group.add(left, right, back, front);
+  const outline = box(metrics.width + 0.18, 0.05, 0.08, trimMat);
+  outline.position.set(0, 0.04, metrics.frontZ - 0.08);
+  const outlineBack = outline.clone();
+  outlineBack.position.z = metrics.backZ + 0.08;
+  const outlineLeft = box(0.08, 0.05, metrics.depth + 0.18, trimMat);
+  outlineLeft.position.set(metrics.leftX - 0.08, 0.04, 0);
+  const outlineRight = outlineLeft.clone();
+  outlineRight.position.x = metrics.rightX + 0.08;
+  group.add(outline, outlineBack, outlineLeft, outlineRight);
+  const label = makeRoomLabel(room.name, active ? "#163929" : "#e9eee7");
+  label.position.set(0, 0.64, 0);
+  group.add(label);
+  group.traverse((child: any) => {
+    child.castShadow = false;
+    child.receiveShadow = false;
+    child.userData.pickable = false;
+  });
+  return group;
+}
+
+function makeActiveRoomHalo(metrics: ReturnType<typeof roomMetrics>) {
+  const group = new THREE.Group();
+  const material = new THREE.MeshBasicMaterial({ color: "#7cf0b3", transparent: true, opacity: 0.22, depthWrite: false });
+  const front = box(metrics.width + 0.42, 0.035, 0.08, material);
+  front.position.set(0, 0.035, metrics.frontZ - 0.16);
+  const back = front.clone();
+  back.position.z = metrics.backZ + 0.16;
+  const left = box(0.08, 0.035, metrics.depth + 0.42, material);
+  left.position.set(metrics.leftX - 0.16, 0.035, 0);
+  const right = left.clone();
+  right.position.x = metrics.rightX + 0.16;
+  group.add(front, back, left, right);
+  return group;
+}
+
+function makeRoomConnector(slot: Vec2) {
+  if (Math.abs(slot.x) < 0.1 && Math.abs(slot.z) < 0.1) return null;
+  const length = Math.max(0.5, Math.hypot(slot.x, slot.z) - 3.1);
+  const material = new THREE.MeshBasicMaterial({ color: "#6f806f", transparent: true, opacity: 0.34, depthWrite: false });
+  const connector = box(0.28, 0.022, length, material);
+  connector.position.set(slot.x * 0.5, 0.018, slot.z * 0.5);
+  connector.rotation.y = Math.atan2(slot.x, slot.z);
+  return connector;
+}
+
+function makeRoomLabel(text: string, color: string) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "rgba(255,255,255,0.82)";
+  ctx.roundRect(24, 28, 464, 72, 20);
+  ctx.fill();
+  ctx.fillStyle = color;
+  ctx.font = "800 34px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const label = text.length > 22 ? `${text.slice(0, 21)}...` : text;
+  ctx.fillText(label, 256, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
+  sprite.scale.set(2.2, 0.55, 1);
+  return sprite;
 }
 
 function createItemGroup(item: BuilderItem, feeds: MonitorFeed[]) {
