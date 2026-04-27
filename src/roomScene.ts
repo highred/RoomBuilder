@@ -294,7 +294,8 @@ export class RoomBuilder {
   private readonly feeds: MonitorFeed[] = [];
   private readonly animated: any[] = [];
   private readonly floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-  private readonly selectionBox = new THREE.BoxHelper(new THREE.Group(), "#8ef0c0");
+  private readonly selectionBounds = new THREE.Box3();
+  private readonly selectionBox = new THREE.Box3Helper(this.selectionBounds, "#8ef0c0");
   private readonly gridHelper: any;
   private readonly wallGroups = new Map<WallSide, any>();
   private readonly wallVisibility = new Map<WallSide, number>([
@@ -310,6 +311,7 @@ export class RoomBuilder {
   private rimLight?: any;
   private roomStyle = createRoomStyle();
   private selectedId: string | null = null;
+  private selectedIds = new Set<string>();
   private currentRoomId: string | null = null;
   private assetLibrary: SavedAsset[] = [];
   private undoStack: Array<{ items: BuilderItem[]; style: RoomStyle; currentRoomId: string | null }> = [];
@@ -335,6 +337,25 @@ export class RoomBuilder {
 
   get selectedItem() {
     return this.selectedId ? this.items.get(this.selectedId) ?? null : null;
+  }
+
+  getSelectedItems() {
+    return [...this.selectedIds].map((id) => this.items.get(id)).filter(Boolean) as BuilderItem[];
+  }
+
+  getSelectionCount() {
+    return this.selectedIds.size;
+  }
+
+  getSelectedCenter() {
+    if (!this.selectedIds.size) return null;
+    const bounds = new THREE.Box3();
+    for (const id of this.selectedIds) {
+      const group = this.groups.get(id);
+      if (group) bounds.union(new THREE.Box3().setFromObject(group));
+    }
+    if (bounds.isEmpty()) return null;
+    return bounds.getCenter(new THREE.Vector3());
   }
 
   getAssets() {
@@ -567,13 +588,16 @@ export class RoomBuilder {
   }
 
   deleteSelected() {
-    if (!this.selectedId) return;
+    if (!this.selectedIds.size) return;
     this.pushUndo();
-    const group = this.groups.get(this.selectedId);
-    if (group) this.scene.remove(group);
-    this.groups.delete(this.selectedId);
-    this.items.delete(this.selectedId);
+    for (const id of this.selectedIds) {
+      const group = this.groups.get(id);
+      if (group) this.scene.remove(group);
+      this.groups.delete(id);
+      this.items.delete(id);
+    }
     this.selectedId = null;
+    this.selectedIds.clear();
     this.selectionBox.visible = false;
     this.onSelectionChange?.(null);
     this.persist();
@@ -603,6 +627,7 @@ export class RoomBuilder {
     this.feeds.length = 0;
     this.animated.length = 0;
     this.selectedId = null;
+    this.selectedIds.clear();
     this.selectionBox.visible = false;
     this.onSelectionChange?.(null);
   }
@@ -713,23 +738,60 @@ export class RoomBuilder {
 
   select(id: string | null) {
     this.selectedId = id;
+    this.selectedIds.clear();
+    if (id) this.selectedIds.add(id);
     const item = this.selectedItem;
     this.selectionBox.visible = !!id;
     this.refreshSelectionBox();
     this.onSelectionChange?.(item ? structuredClone(item) : null);
   }
 
+  selectMany(ids: string[]) {
+    const valid = ids.filter((id) => this.items.has(id));
+    this.selectedIds = new Set(valid);
+    this.selectedId = valid[0] ?? null;
+    this.selectionBox.visible = valid.length > 0;
+    this.refreshSelectionBox();
+    this.onSelectionChange?.(this.selectedItem ? structuredClone(this.selectedItem) : null);
+  }
+
   selectFromObject(object: any) {
     let cursor = object;
     while (cursor) {
       if (cursor.userData?.builderId) {
-        this.select(cursor.userData.builderId);
-        return cursor.userData.builderId as string;
+        const id = cursor.userData.builderId as string;
+        if (this.selectedIds.has(id) && this.selectedIds.size > 1) {
+          this.selectedId = id;
+          this.refreshSelectionBox();
+          this.onSelectionChange?.(this.selectedItem ? structuredClone(this.selectedItem) : null);
+        } else {
+          this.select(id);
+        }
+        return id;
       }
       cursor = cursor.parent;
     }
     this.select(null);
     return null;
+  }
+
+  selectInScreenRect(camera: any, rect: DOMRect, area: { left: number; top: number; width: number; height: number }) {
+    const ids: string[] = [];
+    const screenPoint = new THREE.Vector3();
+    const bounds = new THREE.Box3();
+    const center = new THREE.Vector3();
+    for (const [id, group] of this.groups) {
+      if (!group.visible || group.userData.pickable === false) continue;
+      bounds.setFromObject(group);
+      if (bounds.isEmpty()) continue;
+      bounds.getCenter(center);
+      screenPoint.copy(center).project(camera);
+      const x = area.left + (screenPoint.x + 1) * 0.5 * area.width;
+      const y = area.top + (1 - (screenPoint.y + 1) * 0.5) * area.height;
+      if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) ids.push(id);
+    }
+    this.selectMany(ids);
+    return ids.length;
   }
 
   beginUndoStep() {
@@ -758,6 +820,7 @@ export class RoomBuilder {
       group.position.z = item.position.z;
     }
     this.moveCarriedItems(previous, item, carried);
+    this.moveSelectedPeers(previous, item, carried);
     this.refreshSelectionBox();
     this.onSelectionChange?.(structuredClone(item));
   }
@@ -781,6 +844,7 @@ export class RoomBuilder {
       group.position.z = item.position.z;
     }
     this.moveCarriedItems(previous, item, carried);
+    this.moveSelectedPeers(previous, item, carried);
     this.refreshSelectionBox();
     this.onSelectionChange?.(structuredClone(item));
     this.persist();
@@ -796,6 +860,7 @@ export class RoomBuilder {
     const group = this.groups.get(item.id);
     if (group) group.position.y = item.elevation;
     this.moveCarriedItems(previous, item, carried);
+    this.moveSelectedPeers(previous, item, carried, true);
     this.refreshSelectionBox();
     this.onSelectionChange?.(structuredClone(item));
     this.persist();
@@ -933,7 +998,7 @@ export class RoomBuilder {
       ...item,
       id: item.id || crypto.randomUUID(),
       position: this.clampToCurrentRoom(snapForKind(item.kind, item.position)),
-      elevation: snapHeight(item.elevation ?? 0),
+      elevation: snapFineHeight(item.elevation ?? 0),
       scale: item.scale || 1,
       rotation: item.rotation || 0,
     };
@@ -1070,6 +1135,34 @@ export class RoomBuilder {
     }
   }
 
+  private moveSelectedPeers(previous: BuilderItem, current: BuilderItem, carried: BuilderItem[], verticalOnly = false) {
+    if (this.selectedIds.size <= 1) return;
+    const carriedIds = new Set(carried.map((item) => item.id));
+    const dx = current.position.x - previous.position.x;
+    const dz = current.position.z - previous.position.z;
+    const dy = (current.elevation ?? 0) - (previous.elevation ?? 0);
+    for (const id of this.selectedIds) {
+      if (id === current.id || carriedIds.has(id)) continue;
+      const item = this.items.get(id);
+      if (!item) continue;
+      if (!verticalOnly) {
+        item.position = this.clampToCurrentRoom(snapForKind(item.kind, {
+          x: item.position.x + dx,
+          z: item.position.z + dz,
+        }));
+        this.applyWallSnap(item);
+      }
+      item.elevation = Math.min(2.6, Math.max(0, snapFineHeight((item.elevation ?? 0) + dy)));
+      const group = this.groups.get(item.id);
+      if (group) {
+        group.position.x = item.position.x;
+        group.position.y = item.elevation;
+        group.position.z = item.position.z;
+        group.rotation.y = item.rotation;
+      }
+    }
+  }
+
   private applyWallSnap(item: BuilderItem) {
     if (!wallMountedKinds.has(item.kind)) return;
     const metrics = roomMetrics(this.roomStyle);
@@ -1142,11 +1235,16 @@ export class RoomBuilder {
   }
 
   private refreshSelectionBox() {
-    if (!this.selectedId) return;
-    const group = this.groups.get(this.selectedId);
-    if (!group) return;
-    this.selectionBox.setFromObject(group);
-    this.selectionBox.visible = true;
+    if (!this.selectedIds.size) {
+      this.selectionBox.visible = false;
+      return;
+    }
+    this.selectionBounds.makeEmpty();
+    for (const id of this.selectedIds) {
+      const group = this.groups.get(id);
+      if (group) this.selectionBounds.union(new THREE.Box3().setFromObject(group));
+    }
+    this.selectionBox.visible = !this.selectionBounds.isEmpty();
   }
 
   private addLighting() {

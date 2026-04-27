@@ -75,7 +75,21 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let dragging = false;
 let didDrag = false;
+let boxSelecting = false;
+let boxDidDrag = false;
+let boxStart = { x: 0, y: 0 };
+const selectionMarquee = document.createElement("div");
+selectionMarquee.className = "selection-marquee hidden";
+document.body.append(selectionMarquee);
 let lastMouseMove = performance.now();
+let focusTween: {
+  start: number;
+  duration: number;
+  fromTarget: THREE.Vector3;
+  toTarget: THREE.Vector3;
+  fromPosition: THREE.Vector3;
+  toPosition: THREE.Vector3;
+} | null = null;
 
 const zoomIn = document.querySelector<HTMLButtonElement>("#zoomIn");
 const zoomOut = document.querySelector<HTMLButtonElement>("#zoomOut");
@@ -349,8 +363,23 @@ renderer.domElement.addEventListener("pointerdown", (event: PointerEvent) => {
     controls.enabled = false;
     renderer.domElement.setPointerCapture(event.pointerId);
   } else {
-    builder.select(null);
+    boxSelecting = true;
+    boxDidDrag = false;
+    boxStart = { x: event.clientX, y: event.clientY };
+    updateSelectionMarquee(event.clientX, event.clientY);
+    controls.enabled = false;
+    renderer.domElement.setPointerCapture(event.pointerId);
   }
+});
+
+renderer.domElement.addEventListener("dblclick", (event: MouseEvent) => {
+  if (event.button !== 0) return;
+  updatePointer(event as PointerEvent);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(builder.getDraggableObjects(), true);
+  if (!hits.length) return;
+  builder.selectFromObject(hits[0].object);
+  centerCameraOnSelection();
 });
 
 renderer.domElement.addEventListener("contextmenu", (event: MouseEvent) => {
@@ -360,6 +389,12 @@ renderer.domElement.addEventListener("contextmenu", (event: MouseEvent) => {
 renderer.domElement.addEventListener("pointermove", (event: PointerEvent) => {
   lastMouseMove = performance.now();
   app?.classList.remove("ui-hidden");
+  if (boxSelecting) {
+    const distance = Math.hypot(event.clientX - boxStart.x, event.clientY - boxStart.y);
+    boxDidDrag = boxDidDrag || distance > 5;
+    updateSelectionMarquee(event.clientX, event.clientY);
+    return;
+  }
   if (!dragging) return;
   updatePointer(event);
   raycaster.setFromCamera(pointer, camera);
@@ -376,6 +411,20 @@ window.addEventListener("mousemove", () => {
 });
 
 renderer.domElement.addEventListener("pointerup", (event: PointerEvent) => {
+  if (boxSelecting) {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+    controls.enabled = true;
+    boxSelecting = false;
+    selectionMarquee.classList.add("hidden");
+    if (boxDidDrag) {
+      const rect = marqueeRect(boxStart.x, boxStart.y, event.clientX, event.clientY);
+      const count = builder.selectInScreenRect(camera, rect, renderer.domElement.getBoundingClientRect());
+      flash(count ? `Selected ${count} item${count === 1 ? "" : "s"}` : "No items in selection");
+    } else {
+      builder.select(null);
+    }
+    return;
+  }
   if (dragging) {
     renderer.domElement.releasePointerCapture(event.pointerId);
     controls.enabled = true;
@@ -441,6 +490,13 @@ function tick() {
   smoothedFps = smoothedFps * 0.92 + frameFps * 0.08;
   const elapsed = clock.getElapsedTime();
   builder.update(elapsed, camera.position);
+  if (focusTween) {
+    const t = Math.min(1, (now - focusTween.start) / focusTween.duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    camera.position.lerpVectors(focusTween.fromPosition, focusTween.toPosition, eased);
+    controls.target.lerpVectors(focusTween.fromTarget, focusTween.toTarget, eased);
+    if (t >= 1) focusTween = null;
+  }
   controls.update();
   if (controls.autoRotate && performance.now() - lastMouseMove > 1450) {
     app?.classList.add("ui-hidden");
@@ -461,16 +517,47 @@ function updatePointer(event: PointerEvent) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 }
 
+function marqueeRect(x1: number, y1: number, x2: number, y2: number) {
+  return new DOMRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+}
+
+function updateSelectionMarquee(x: number, y: number) {
+  const rect = marqueeRect(boxStart.x, boxStart.y, x, y);
+  selectionMarquee.style.left = `${rect.left}px`;
+  selectionMarquee.style.top = `${rect.top}px`;
+  selectionMarquee.style.width = `${rect.width}px`;
+  selectionMarquee.style.height = `${rect.height}px`;
+  selectionMarquee.classList.toggle("hidden", rect.width < 5 && rect.height < 5);
+}
+
+function centerCameraOnSelection() {
+  const center = builder.getSelectedCenter();
+  if (!center) return;
+  const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+  const minDistance = 5.2;
+  if (offset.length() < minDistance) offset.setLength(minDistance);
+  focusTween = {
+    start: performance.now(),
+    duration: 520,
+    fromTarget: controls.target.clone(),
+    toTarget: center.clone().add(new THREE.Vector3(0, 0.35, 0)),
+    fromPosition: camera.position.clone(),
+    toPosition: center.clone().add(offset),
+  };
+  flash("Camera centered on selection");
+}
+
 function renderSelection(item: BuilderItem | null) {
   if (!selectedName || !selectedMeta) return;
-  selectionPanel?.classList.toggle("hidden", !item);
-  selectedName.textContent = item ? item.name : "Nothing selected";
+  const selectionCount = builder.getSelectionCount();
+  selectionPanel?.classList.toggle("hidden", selectionCount === 0);
+  selectedName.textContent = selectionCount > 1 ? `${selectionCount} items selected` : item ? item.name : "Nothing selected";
   if (rotationInput) {
     rotationInput.value = item ? String(((Math.round(THREE.MathUtils.radToDeg(item.rotation)) % 360) + 360) % 360) : "0";
   }
   if (colorInput) colorInput.value = item?.tint && item.tint.startsWith("#") ? item.tint : "#78938a";
   selectedMeta.textContent = item
-    ? `${item.kind} | x ${item.position.x.toFixed(2)}, z ${item.position.z.toFixed(2)} | height ${(item.elevation ?? 0).toFixed(1)} | rot ${((Math.round(THREE.MathUtils.radToDeg(item.rotation)) % 360) + 360) % 360} deg | scale ${item.scale.toFixed(1)}`
+    ? `${item.kind} | x ${item.position.x.toFixed(2)}, z ${item.position.z.toFixed(2)} | height ${(item.elevation ?? 0).toFixed(2)} | rot ${((Math.round(THREE.MathUtils.radToDeg(item.rotation)) % 360) + 360) % 360} deg | scale ${item.scale.toFixed(1)}`
     : "Click an item, then drag it across the grid.";
 }
 

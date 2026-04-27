@@ -433,6 +433,19 @@ button.active {
   transform: translateX(calc(100% + 24px));
 }
 
+.selection-marquee {
+  position: fixed;
+  z-index: 12;
+  border: 1px solid rgba(42, 143, 104, 0.92);
+  background: rgba(92, 210, 159, 0.16);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45) inset;
+  pointer-events: none;
+}
+
+.selection-marquee.hidden {
+  display: none;
+}
+
 .selection-actions,
 .rotation-row {
   display: grid;
