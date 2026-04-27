@@ -490,7 +490,7 @@ export class RoomBuilder {
   getConnectedRoomIds(id = this.currentRoomId ?? "") {
     const layout = loadBuildingLayout();
     return layout.connections
-      .filter((link) => link.a === id || link.b === id)
+      .filter((link) => link?.a === id || link?.b === id)
       .map((link) => (link.a === id ? link.b : link.a));
   }
 
@@ -3841,8 +3841,8 @@ function loadBuildingLayout(): BuildingLayout {
   const raw = localStorage.getItem(STORAGE_BUILDING);
   const layout = raw ? safeParse<BuildingLayout>(raw) : null;
   return {
-    positions: layout?.positions ?? {},
-    connections: Array.isArray(layout?.connections) ? layout.connections : [],
+    positions: sanitizeBuildingPositions(layout?.positions),
+    connections: sanitizeBuildingConnections(layout?.connections),
   };
 }
 
@@ -3876,6 +3876,29 @@ function normalizeBuildingLayout(rooms: SavedRoom[], layout: BuildingLayout, cur
 
 function sameConnection(link: { a: string; b: string }, a: string, b: string) {
   return (link.a === a && link.b === b) || (link.a === b && link.b === a);
+}
+
+function sanitizeBuildingPositions(positions?: Record<string, Vec2>): Record<string, Vec2> {
+  const next: Record<string, Vec2> = {};
+  if (!positions || typeof positions !== "object") return next;
+  for (const [id, position] of Object.entries(positions)) {
+    if (!id || !position || typeof position.x !== "number" || typeof position.z !== "number") continue;
+    if (!Number.isFinite(position.x) || !Number.isFinite(position.z)) continue;
+    next[id] = { x: position.x, z: position.z };
+  }
+  return next;
+}
+
+function sanitizeBuildingConnections(connections?: Array<{ a: string; b: string }>): Array<{ a: string; b: string }> {
+  if (!Array.isArray(connections)) return [];
+  return connections.filter((link) => (
+    !!link
+    && typeof link.a === "string"
+    && typeof link.b === "string"
+    && !!link.a
+    && !!link.b
+    && link.a !== link.b
+  ));
 }
 
 const MODEL_DB = "iso-room-builder-models";
