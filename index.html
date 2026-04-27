@@ -106,12 +106,12 @@
           <summary>Building Layout</summary>
           <div class="generator">
             <button id="showBuilding" class="wide-action" type="button">Show Building Outline</button>
-            <button id="hideBuilding" class="wide-action" type="button">Hide Building Outline</button>
+            <button id="hideBuilding" class="wide-action" type="button">Return To Active Room</button>
             <button id="refreshBuilding" class="wide-action" type="button">Refresh Floorplan</button>
-            <button id="connectRoom" class="wide-action" type="button">Connect Selected Room</button>
-            <button id="disconnectRoom" class="wide-action" type="button">Disconnect Selected Room</button>
+            <button id="connectRoom" class="wide-action" type="button">Set Link Start</button>
+            <button id="disconnectRoom" class="wide-action" type="button">Connect/Disconnect Selected</button>
             <button id="enterConnectedRoom" class="wide-action" type="button">Enter Selected Room</button>
-            <div class="empty-state">Drag saved room shells in the scene. Connect rooms to create navigable paths.</div>
+            <div class="empty-state">Drag room outlines on the grid. Use Set Link Start, select another room, then connect or disconnect.</div>
           </div>
           <div id="buildingRoomList" class="room-list"></div>
         </details>
@@ -346,6 +346,7 @@
           <button id="zoomOut" type="button" title="Zoom out">-</button>
           <button id="resetView" type="button" title="Reset view">Reset</button>
           <button id="autoOrbit" type="button" title="Toggle cinematic orbit">Orbit</button>
+          <div id="connectedRooms" class="connected-rooms hidden" aria-label="Connected rooms"></div>
         </div>
       </div>
       <div id="status" class="status">Ready</div>

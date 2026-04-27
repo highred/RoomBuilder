@@ -312,6 +312,7 @@ export class RoomBuilder {
   ]);
   private shellGroup = new THREE.Group();
   private buildingGroup = new THREE.Group();
+  private buildingGridGroup = new THREE.Group();
   private buildingMode = false;
   private selectedBuildingRoomId: string | null = null;
   private sunlightGroup = new THREE.Group();
@@ -339,7 +340,8 @@ export class RoomBuilder {
 
     this.addLighting();
     this.addRoomShell();
-    this.scene.add(this.gridHelper, this.selectionBox, this.buildingGroup);
+    this.buildingGridGroup.visible = false;
+    this.scene.add(this.gridHelper, this.selectionBox, this.buildingGroup, this.buildingGridGroup);
     this.assetLibrary = loadAssets();
     try {
       this.loadScene();
@@ -426,6 +428,11 @@ export class RoomBuilder {
 
   showBuildingOverview(rooms = loadRooms()) {
     this.buildingMode = true;
+    this.shellGroup.visible = false;
+    this.sunlightGroup.visible = false;
+    this.gridHelper.visible = false;
+    this.selectionBox.visible = false;
+    for (const group of this.groups.values()) group.visible = false;
     this.rebuildBuildingOverview(rooms);
   }
 
@@ -433,6 +440,13 @@ export class RoomBuilder {
     this.buildingMode = false;
     this.selectedBuildingRoomId = null;
     this.buildingGroup.clear();
+    this.buildingGridGroup.clear();
+    this.buildingGridGroup.visible = false;
+    this.shellGroup.visible = true;
+    this.sunlightGroup.visible = true;
+    this.gridHelper.visible = true;
+    for (const group of this.groups.values()) group.visible = true;
+    this.updateWallVisibility(new THREE.Vector3(999, 999, 999));
   }
 
   refreshBuildingOverview(rooms = loadRooms()) {
@@ -447,12 +461,22 @@ export class RoomBuilder {
     return this.buildingMode ? [this.buildingGroup] : [];
   }
 
+  getBuildingFloorPoint(raycaster: any) {
+    const point = new THREE.Vector3();
+    return raycaster.ray.intersectPlane(this.floorPlane, point) ? point : null;
+  }
+
   getBuildingLayout() {
     return loadBuildingLayout();
   }
 
   getSelectedBuildingRoomId() {
     return this.selectedBuildingRoomId;
+  }
+
+  selectBuildingRoom(id: string | null) {
+    this.selectedBuildingRoomId = id;
+    this.refreshBuildingOverview();
   }
 
   selectBuildingRoomFromObject(object: any) {
@@ -493,6 +517,10 @@ export class RoomBuilder {
     saveBuildingLayout(layout);
     this.refreshBuildingOverview();
     return layout;
+  }
+
+  areBuildingRoomsConnected(a: string, b: string) {
+    return loadBuildingLayout().connections.some((link) => sameConnection(link, a, b));
   }
 
   getConnectedRoomIds(id = this.currentRoomId ?? "") {
@@ -1077,7 +1105,7 @@ export class RoomBuilder {
       object.position.y += Math.sin(time * 1.2 + index) * 0.0007;
       object.rotation.y += Math.sin(time + index) * 0.0009;
     });
-    if (cameraPosition) this.updateWallVisibility(cameraPosition);
+    if (cameraPosition && !this.buildingMode) this.updateWallVisibility(cameraPosition);
   }
 
   getFloorPoint(raycaster: any) {
@@ -1350,15 +1378,16 @@ export class RoomBuilder {
 
   private rebuildBuildingOverview(rooms: SavedRoom[]) {
     this.buildingGroup.clear();
+    this.buildingGridGroup.clear();
     const layout = normalizeBuildingLayout(rooms, loadBuildingLayout(), this.currentRoomId);
     saveBuildingLayout(layout);
     const activeMetrics = roomMetrics(this.roomStyle);
     const cellX = Math.max(5.6, activeMetrics.width + 1.3);
     const cellZ = Math.max(4.6, activeMetrics.depth + 1.3);
-    if (this.currentRoomId && !layout.positions[this.currentRoomId]) layout.positions[this.currentRoomId] = { x: 0, z: 0 };
-    const savedRooms = rooms.filter((room) => room.id !== this.currentRoomId);
-    const previewSlots = buildingPreviewSlots(savedRooms.length, cellX, cellZ);
-    for (const [index, room] of savedRooms.entries()) {
+    const previewSlots = buildingPreviewSlots(rooms.length, cellX, cellZ);
+    this.buildingGridGroup.visible = true;
+    this.buildingGridGroup.add(makeBuildingGrid(rooms, layout));
+    for (const [index, room] of rooms.entries()) {
       const slot = layout.positions[room.id] ?? previewSlots[index] ?? { x: 0, z: 0 };
       const preview = makeBuildingRoomPreview(room, slot, false, room.id === this.selectedBuildingRoomId);
       this.buildingGroup.add(preview);
@@ -1371,8 +1400,6 @@ export class RoomBuilder {
       const connector = makeRoomConnectorBetween(a, b, link.a === this.currentRoomId || link.b === this.currentRoomId);
       if (connector) this.buildingGroup.add(connector);
     }
-    const activeHalo = makeActiveRoomHalo(activeMetrics);
-    this.buildingGroup.add(activeHalo);
   }
 
   private refreshSelectionBox() {
@@ -1553,6 +1580,29 @@ function buildingPreviewSlots(count: number, cellX: number, cellZ: number) {
     ring += 1;
   }
   return slots;
+}
+
+function makeBuildingGrid(rooms: SavedRoom[], layout: BuildingLayout) {
+  const group = new THREE.Group();
+  const positions = rooms.map((room) => layout.positions[room.id]).filter(Boolean);
+  const spread = Math.max(18, ...positions.map((position) => Math.max(Math.abs(position.x), Math.abs(position.z)) + 7));
+  const material = new THREE.LineBasicMaterial({ color: "#819275", transparent: true, opacity: 0.28 });
+  const points: THREE.Vector3[] = [];
+  const min = Math.floor(-spread / 2) * 2;
+  const max = Math.ceil(spread / 2) * 2;
+  for (let x = min; x <= max; x += 1) {
+    points.push(new THREE.Vector3(x, 0.01, min), new THREE.Vector3(x, 0.01, max));
+  }
+  for (let z = min; z <= max; z += 1) {
+    points.push(new THREE.Vector3(min, 0.01, z), new THREE.Vector3(max, 0.01, z));
+  }
+  const grid = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(points), material);
+  group.add(grid);
+  const axisMaterial = new THREE.MeshBasicMaterial({ color: "#273521", transparent: true, opacity: 0.28 });
+  const xAxis = box(max - min, 0.018, 0.035, axisMaterial);
+  const zAxis = box(0.035, 0.018, max - min, axisMaterial);
+  group.add(xAxis, zAxis);
+  return group;
 }
 
 function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean, selected = false) {

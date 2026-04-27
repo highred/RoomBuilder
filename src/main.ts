@@ -95,6 +95,9 @@ const pointer = new THREE.Vector2();
 let dragging = false;
 let didDrag = false;
 let draggingBuildingRoomId: string | null = null;
+let buildingDidDrag = false;
+let buildingPointerStart = { x: 0, y: 0 };
+let pendingConnectionRoomId: string | null = null;
 let boxSelecting = false;
 let boxDidDrag = false;
 let boxStart = { x: 0, y: 0 };
@@ -128,6 +131,7 @@ const roomWidth = document.querySelector<HTMLInputElement>("#roomWidth");
 const roomDepth = document.querySelector<HTMLInputElement>("#roomDepth");
 const roomList = document.querySelector<HTMLElement>("#roomList");
 const buildingRoomList = document.querySelector<HTMLElement>("#buildingRoomList");
+const connectedRooms = document.querySelector<HTMLElement>("#connectedRooms");
 const status = document.querySelector<HTMLElement>("#status");
 const perfFps = document.querySelector<HTMLElement>("#perfFps");
 const perfItems = document.querySelector<HTMLElement>("#perfItems");
@@ -231,6 +235,7 @@ document.querySelector<HTMLButtonElement>("#saveRoom")?.addEventListener("click"
     if (roomName) roomName.value = saved.name;
     renderRoomList(builder.getSavedRooms());
     renderBuildingRoomList(builder.getSavedRooms());
+    renderConnectedRooms();
     flash(`Updated ${saved.name}`);
   } else {
     flash("Room saved in this browser");
@@ -242,6 +247,7 @@ document.querySelector<HTMLButtonElement>("#saveNamedRoom")?.addEventListener("c
   if (roomName) roomName.value = saved.name;
   renderRoomList(builder.getSavedRooms());
   renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
   flash(`Saved ${saved.name}`);
 });
 document.querySelector<HTMLButtonElement>("#newRoom")?.addEventListener("click", () => {
@@ -254,49 +260,61 @@ document.querySelector<HTMLButtonElement>("#newRoom")?.addEventListener("click",
   renderLightingControls();
   renderRoomList(builder.getSavedRooms());
   renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
   flash(`New ${size.widthFeet} x ${size.depthFeet} ft room ready`);
 });
 document.querySelector<HTMLButtonElement>("#showBuilding")?.addEventListener("click", () => {
   builder.showBuildingOverview(builder.getSavedRooms());
+  pendingConnectionRoomId = null;
   renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
   zoomToBuildingView();
   flash("Building outline enabled");
 });
 document.querySelector<HTMLButtonElement>("#hideBuilding")?.addEventListener("click", () => {
   builder.hideBuildingOverview();
-  flash("Building outline hidden");
+  pendingConnectionRoomId = null;
+  renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
+  flash("Returned to active room");
 });
 document.querySelector<HTMLButtonElement>("#refreshBuilding")?.addEventListener("click", () => {
   builder.showBuildingOverview(builder.getSavedRooms());
   renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
   flash("Floorplan refreshed");
 });
 document.querySelector<HTMLButtonElement>("#connectRoom")?.addEventListener("click", () => {
   const selected = builder.getSelectedBuildingRoomId();
-  const current = builder.getCurrentRoomId();
-  if (!selected || !current) {
-    flash("Select a building room first");
+  if (!selected) {
+    flash("Select a room outline first");
     return;
   }
-  builder.connectBuildingRooms(current, selected);
+  pendingConnectionRoomId = selected;
   renderBuildingRoomList(builder.getSavedRooms());
-  flash("Rooms connected");
+  flash("Link start set. Select another room, then connect or disconnect.");
 });
 document.querySelector<HTMLButtonElement>("#disconnectRoom")?.addEventListener("click", () => {
   const selected = builder.getSelectedBuildingRoomId();
-  const current = builder.getCurrentRoomId();
-  if (!selected || !current) {
-    flash("Select a connected room first");
+  if (!selected || !pendingConnectionRoomId || selected === pendingConnectionRoomId) {
+    flash("Set a link start, then select a different room");
     return;
   }
-  builder.disconnectBuildingRooms(current, selected);
+  if (builder.areBuildingRoomsConnected(pendingConnectionRoomId, selected)) {
+    builder.disconnectBuildingRooms(pendingConnectionRoomId, selected);
+    flash("Rooms disconnected");
+  } else {
+    builder.connectBuildingRooms(pendingConnectionRoomId, selected);
+    flash("Rooms connected");
+  }
+  pendingConnectionRoomId = selected;
   renderBuildingRoomList(builder.getSavedRooms());
-  flash("Rooms disconnected");
+  renderConnectedRooms();
 });
 document.querySelector<HTMLButtonElement>("#enterConnectedRoom")?.addEventListener("click", () => {
   const selected = builder.getSelectedBuildingRoomId();
-  if (!selected || !builder.getConnectedRoomIds().includes(selected)) {
-    flash("Selected room is not connected to the active room");
+  if (!selected) {
+    flash("Select a room outline first");
     return;
   }
   enterRoom(selected);
@@ -415,6 +433,7 @@ renderSelection(builder.selectedItem);
 renderAssetLibrary(builder.getAssets());
 renderRoomList(builder.getSavedRooms());
 renderBuildingRoomList(builder.getSavedRooms());
+renderConnectedRooms();
 renderRoomSize();
 renderCurrentRoomName();
 renderLightingControls();
@@ -431,6 +450,8 @@ renderer.domElement.addEventListener("pointerdown", (event: PointerEvent) => {
       const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
       if (roomId) {
         draggingBuildingRoomId = roomId;
+        buildingDidDrag = false;
+        buildingPointerStart = { x: event.clientX, y: event.clientY };
         controls.enabled = false;
         renderer.domElement.setPointerCapture(event.pointerId);
         renderBuildingRoomList(builder.getSavedRooms());
@@ -463,7 +484,7 @@ renderer.domElement.addEventListener("dblclick", (event: MouseEvent) => {
     const roomHits = raycaster.intersectObjects(builder.getBuildingObjects(), true);
     if (roomHits.length) {
       const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
-      if (roomId && builder.getConnectedRoomIds().includes(roomId)) enterRoom(roomId);
+      if (roomId) enterRoom(roomId);
       return;
     }
   }
@@ -481,9 +502,11 @@ renderer.domElement.addEventListener("pointermove", (event: PointerEvent) => {
   lastMouseMove = performance.now();
   app?.classList.remove("ui-hidden");
   if (draggingBuildingRoomId) {
+    const distance = Math.hypot(event.clientX - buildingPointerStart.x, event.clientY - buildingPointerStart.y);
+    buildingDidDrag = buildingDidDrag || distance > 4;
     updatePointer(event);
     raycaster.setFromCamera(pointer, camera);
-    const point = builder.getFloorPoint(raycaster);
+    const point = builder.getBuildingFloorPoint(raycaster);
     if (point) builder.moveBuildingRoom(draggingBuildingRoomId, { x: point.x, z: point.z });
     return;
   }
@@ -512,9 +535,14 @@ renderer.domElement.addEventListener("pointerup", (event: PointerEvent) => {
   if (draggingBuildingRoomId) {
     renderer.domElement.releasePointerCapture(event.pointerId);
     controls.enabled = true;
+    const roomId = draggingBuildingRoomId;
     draggingBuildingRoomId = null;
     renderBuildingRoomList(builder.getSavedRooms());
-    flash("Room placement saved");
+    if (buildingDidDrag) {
+      flash("Room placement saved");
+    } else {
+      enterRoom(roomId);
+    }
     return;
   }
   if (boxSelecting) {
@@ -664,18 +692,52 @@ function zoomToBuildingView() {
   };
 }
 
+function zoomToRoomView() {
+  focusTween = {
+    start: performance.now(),
+    duration: 720,
+    fromTarget: controls.target.clone(),
+    toTarget: new THREE.Vector3(0, 1.25, -0.15),
+    fromPosition: camera.position.clone(),
+    toPosition: new THREE.Vector3(9.8, 8.4, 10.2),
+  };
+}
+
 function enterRoom(roomId: string) {
   const room = builder.getSavedRooms().find((entry) => entry.id === roomId);
   const loaded = builder.loadNamedRoom(roomId);
   if (!loaded) return;
+  if (builder.isBuildingMode()) builder.hideBuildingOverview();
   if (roomName) roomName.value = loaded.name;
   restoreShadowMode();
   renderRoomSize();
   renderLightingControls();
   renderRoomList(builder.getSavedRooms());
   renderBuildingRoomList(builder.getSavedRooms());
-  zoomToBuildingView();
+  renderConnectedRooms();
+  zoomToRoomView();
   flash(`Entered ${room?.name ?? loaded.name}`);
+}
+
+function renderConnectedRooms() {
+  if (!connectedRooms) return;
+  connectedRooms.innerHTML = "";
+  if (builder.isBuildingMode()) {
+    connectedRooms.classList.add("hidden");
+    return;
+  }
+  const current = builder.getCurrentRoomId();
+  const connectedIds = current ? builder.getConnectedRoomIds(current) : [];
+  const rooms = builder.getSavedRooms().filter((room) => connectedIds.includes(room.id));
+  connectedRooms.classList.toggle("hidden", rooms.length === 0);
+  for (const room of rooms) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = room.name || "Connected room";
+    button.title = `Enter ${room.name || "room"}`;
+    button.addEventListener("click", () => enterRoom(room.id));
+    connectedRooms.append(button);
+  }
 }
 
 function renderSelection(item: BuilderItem | null) {
@@ -789,6 +851,7 @@ function renderRoomList(rooms: SavedRoom[]) {
       renderLightingControls();
       renderRoomList(builder.getSavedRooms());
       renderBuildingRoomList(builder.getSavedRooms());
+      renderConnectedRooms();
       flash(`Loaded ${room.name}`);
     });
     const remove = document.createElement("button");
@@ -801,6 +864,7 @@ function renderRoomList(rooms: SavedRoom[]) {
       renderCurrentRoomName();
       renderRoomList(builder.getSavedRooms());
       renderBuildingRoomList(builder.getSavedRooms());
+      renderConnectedRooms();
       builder.refreshBuildingOverview(builder.getSavedRooms());
       flash(`Deleted ${room.name}`);
     });
@@ -831,14 +895,14 @@ function renderBuildingRoomList(rooms: SavedRoom[]) {
     button.innerHTML = `<span>${room.name || "Unnamed room"}</span><small>${isConnected ? "Connected | Enter" : `Not connected | ${room.items?.length ?? 0} assets`}</small>`;
     button.addEventListener("click", () => {
       if (readOnlyMode) return;
-      const current = builder.getCurrentRoomId();
-      if (room.id === current || builder.getConnectedRoomIds().includes(room.id)) {
+      if (builder.isBuildingMode()) {
+        builder.selectBuildingRoom(room.id);
+        renderBuildingRoomList(builder.getSavedRooms());
+        flash(`Selected ${room.name || "room"}`);
+      } else if (isConnected) {
         enterRoom(room.id);
       } else {
-        builder.connectBuildingRooms(current ?? room.id, room.id);
-        builder.refreshBuildingOverview(builder.getSavedRooms());
-        renderBuildingRoomList(builder.getSavedRooms());
-        flash(`Connected ${room.name}`);
+        flash("Open Building Layout to connect rooms");
       }
     });
     row.append(button);

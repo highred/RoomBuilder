@@ -564,7 +564,9 @@ button.active {
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  max-width: 360px;
   padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 8px;
@@ -576,6 +578,27 @@ button.active {
 
 .controls button {
   min-width: 42px;
+}
+
+.connected-rooms {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.connected-rooms.hidden {
+  display: none;
+}
+
+.connected-rooms button {
+  min-width: 0;
+  padding: 8px 10px;
+  border-color: rgba(119, 225, 166, 0.42);
+  background: rgba(225, 255, 236, 0.88);
+  color: #263327;
+  font-size: 11px;
 }
 
 .hint {
