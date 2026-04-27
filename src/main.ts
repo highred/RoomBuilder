@@ -3,6 +3,25 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { BuilderItem, RoomBuilder, SavedAsset, SavedRoom, storeImportedModelFile } from "./roomScene";
 
+window.addEventListener("error", (event) => {
+  showStartupError(event.error?.stack || event.message || "Unknown startup error");
+});
+window.addEventListener("unhandledrejection", (event) => {
+  showStartupError(event.reason?.stack || String(event.reason || "Unknown async error"));
+});
+
+function showStartupError(message: string) {
+  console.error(message);
+  let panel = document.querySelector<HTMLElement>("#startupError");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "startupError";
+    panel.style.cssText = "position:fixed;left:340px;right:20px;bottom:20px;z-index:9999;max-height:38vh;overflow:auto;background:#2b1414;color:#fff;padding:14px;border-radius:8px;font:12px/1.4 monospace;white-space:pre-wrap;box-shadow:0 18px 40px rgba(0,0,0,.28)";
+    document.body.append(panel);
+  }
+  panel.textContent = message;
+}
+
 type ExportDirectoryHandle = {
   name: string;
   queryPermission?: (options?: { mode?: "read" | "readwrite" }) => Promise<PermissionState>;
@@ -753,6 +772,7 @@ function renderRoomList(rooms: SavedRoom[]) {
     return;
   }
   for (const room of rooms) {
+    if (!room?.id) continue;
     const isConnected = builder.getConnectedRoomIds().includes(room.id);
     const row = document.createElement("div");
     row.className = "room-row";
@@ -806,7 +826,7 @@ function renderBuildingRoomList(rooms: SavedRoom[]) {
     button.className = "room-tile";
     button.classList.toggle("active", room.id === builder.getCurrentRoomId());
     button.type = "button";
-    button.innerHTML = `<span>${room.name}</span><small>${isConnected ? "Connected | Enter" : "Not connected | Click to connect"}</small>`;
+    button.innerHTML = `<span>${room.name || "Unnamed room"}</span><small>${isConnected ? "Connected | Enter" : `Not connected | ${room.items?.length ?? 0} assets`}</small>`;
     button.addEventListener("click", () => {
       if (readOnlyMode) return;
       const current = builder.getCurrentRoomId();

@@ -341,7 +341,15 @@ export class RoomBuilder {
     this.addRoomShell();
     this.scene.add(this.gridHelper, this.selectionBox, this.buildingGroup);
     this.assetLibrary = loadAssets();
-    this.loadScene();
+    try {
+      this.loadScene();
+    } catch (error) {
+      console.error("Saved scene failed to load; restoring demo scene.", error);
+      this.clearRoomContents();
+      for (const item of demoItems()) this.putItem(item);
+      this.seedShellObjectsFromStyle(false);
+      this.persist();
+    }
   }
 
   get selectedItem() {
@@ -1087,7 +1095,13 @@ export class RoomBuilder {
       this.rebuildRoomShell();
     }
     const items = source?.length ? source : demoItems();
-    for (const item of items) this.putItem(item);
+    for (const item of items) {
+      try {
+        if (isUsableItem(item)) this.putItem(item);
+      } catch (error) {
+        console.warn("Skipping saved item that could not be restored.", item, error);
+      }
+    }
     if (![...this.items.values()].some((item) => shellObjectKinds.has(item.kind))) {
       this.seedShellObjectsFromStyle(false);
     }
@@ -4319,6 +4333,16 @@ function cloneTransform(item: BuilderItem): BuilderItem {
     ...item,
     position: { ...item.position },
   };
+}
+
+function isUsableItem(item: BuilderItem | null | undefined): item is BuilderItem {
+  return !!item
+    && typeof item.kind === "string"
+    && !!item.position
+    && typeof item.position.x === "number"
+    && typeof item.position.z === "number"
+    && Number.isFinite(item.position.x)
+    && Number.isFinite(item.position.z);
 }
 
 function snapForKind(kind: AssetKind, position: Vec2): Vec2 {
