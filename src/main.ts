@@ -41,7 +41,7 @@ renderer.shadowMap.autoUpdate = true;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color("#d9d5c5");
-scene.fog = new THREE.Fog("#d9d5c5", 13, 36);
+scene.fog = null;
 
 const camera = new THREE.PerspectiveCamera(
   42,
@@ -75,6 +75,7 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let dragging = false;
 let didDrag = false;
+let draggingBuildingRoomId: string | null = null;
 let boxSelecting = false;
 let boxDidDrag = false;
 let boxStart = { x: 0, y: 0 };
@@ -251,6 +252,36 @@ document.querySelector<HTMLButtonElement>("#refreshBuilding")?.addEventListener(
   renderBuildingRoomList(builder.getSavedRooms());
   flash("Floorplan refreshed");
 });
+document.querySelector<HTMLButtonElement>("#connectRoom")?.addEventListener("click", () => {
+  const selected = builder.getSelectedBuildingRoomId();
+  const current = builder.getCurrentRoomId();
+  if (!selected || !current) {
+    flash("Select a building room first");
+    return;
+  }
+  builder.connectBuildingRooms(current, selected);
+  renderBuildingRoomList(builder.getSavedRooms());
+  flash("Rooms connected");
+});
+document.querySelector<HTMLButtonElement>("#disconnectRoom")?.addEventListener("click", () => {
+  const selected = builder.getSelectedBuildingRoomId();
+  const current = builder.getCurrentRoomId();
+  if (!selected || !current) {
+    flash("Select a connected room first");
+    return;
+  }
+  builder.disconnectBuildingRooms(current, selected);
+  renderBuildingRoomList(builder.getSavedRooms());
+  flash("Rooms disconnected");
+});
+document.querySelector<HTMLButtonElement>("#enterConnectedRoom")?.addEventListener("click", () => {
+  const selected = builder.getSelectedBuildingRoomId();
+  if (!selected || !builder.getConnectedRoomIds().includes(selected)) {
+    flash("Selected room is not connected to the active room");
+    return;
+  }
+  enterRoom(selected);
+});
 document.querySelector<HTMLButtonElement>("#copyShareLink")?.addEventListener("click", async () => {
   const room = builder.exportRoom(roomName?.value ?? "Shared room");
   const url = `${window.location.origin}${window.location.pathname}#share=${encodeSharePayload(room)}`;
@@ -375,6 +406,19 @@ renderer.domElement.addEventListener("pointerdown", (event: PointerEvent) => {
   if (event.button !== 0) return;
   updatePointer(event);
   raycaster.setFromCamera(pointer, camera);
+  if (builder.isBuildingMode()) {
+    const roomHits = raycaster.intersectObjects(builder.getBuildingObjects(), true);
+    if (roomHits.length) {
+      const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
+      if (roomId) {
+        draggingBuildingRoomId = roomId;
+        controls.enabled = false;
+        renderer.domElement.setPointerCapture(event.pointerId);
+        renderBuildingRoomList(builder.getSavedRooms());
+        return;
+      }
+    }
+  }
   const hits = raycaster.intersectObjects(builder.getDraggableObjects(), true);
   if (hits.length) {
     builder.selectFromObject(hits[0].object);
@@ -396,6 +440,14 @@ renderer.domElement.addEventListener("dblclick", (event: MouseEvent) => {
   if (event.button !== 0) return;
   updatePointer(event as PointerEvent);
   raycaster.setFromCamera(pointer, camera);
+  if (builder.isBuildingMode()) {
+    const roomHits = raycaster.intersectObjects(builder.getBuildingObjects(), true);
+    if (roomHits.length) {
+      const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
+      if (roomId && builder.getConnectedRoomIds().includes(roomId)) enterRoom(roomId);
+      return;
+    }
+  }
   const hits = raycaster.intersectObjects(builder.getDraggableObjects(), true);
   if (!hits.length) return;
   builder.selectFromObject(hits[0].object);
@@ -409,6 +461,13 @@ renderer.domElement.addEventListener("contextmenu", (event: MouseEvent) => {
 renderer.domElement.addEventListener("pointermove", (event: PointerEvent) => {
   lastMouseMove = performance.now();
   app?.classList.remove("ui-hidden");
+  if (draggingBuildingRoomId) {
+    updatePointer(event);
+    raycaster.setFromCamera(pointer, camera);
+    const point = builder.getFloorPoint(raycaster);
+    if (point) builder.moveBuildingRoom(draggingBuildingRoomId, { x: point.x, z: point.z });
+    return;
+  }
   if (boxSelecting) {
     const distance = Math.hypot(event.clientX - boxStart.x, event.clientY - boxStart.y);
     boxDidDrag = boxDidDrag || distance > 5;
@@ -431,6 +490,14 @@ window.addEventListener("mousemove", () => {
 });
 
 renderer.domElement.addEventListener("pointerup", (event: PointerEvent) => {
+  if (draggingBuildingRoomId) {
+    renderer.domElement.releasePointerCapture(event.pointerId);
+    controls.enabled = true;
+    draggingBuildingRoomId = null;
+    renderBuildingRoomList(builder.getSavedRooms());
+    flash("Room placement saved");
+    return;
+  }
   if (boxSelecting) {
     renderer.domElement.releasePointerCapture(event.pointerId);
     controls.enabled = true;
@@ -578,6 +645,20 @@ function zoomToBuildingView() {
   };
 }
 
+function enterRoom(roomId: string) {
+  const room = builder.getSavedRooms().find((entry) => entry.id === roomId);
+  const loaded = builder.loadNamedRoom(roomId);
+  if (!loaded) return;
+  if (roomName) roomName.value = loaded.name;
+  restoreShadowMode();
+  renderRoomSize();
+  renderLightingControls();
+  renderRoomList(builder.getSavedRooms());
+  renderBuildingRoomList(builder.getSavedRooms());
+  zoomToBuildingView();
+  flash(`Entered ${room?.name ?? loaded.name}`);
+}
+
 function renderSelection(item: BuilderItem | null) {
   if (!selectedName || !selectedMeta) return;
   const selectionCount = builder.getSelectionCount();
@@ -672,6 +753,7 @@ function renderRoomList(rooms: SavedRoom[]) {
     return;
   }
   for (const room of rooms) {
+    const isConnected = builder.getConnectedRoomIds().includes(room.id);
     const row = document.createElement("div");
     row.className = "room-row";
     const button = document.createElement("button");
@@ -724,19 +806,18 @@ function renderBuildingRoomList(rooms: SavedRoom[]) {
     button.className = "room-tile";
     button.classList.toggle("active", room.id === builder.getCurrentRoomId());
     button.type = "button";
-    button.innerHTML = `<span>${room.name}</span><small>${room.items.length} assets stored</small>`;
+    button.innerHTML = `<span>${room.name}</span><small>${isConnected ? "Connected | Enter" : "Not connected | Click to connect"}</small>`;
     button.addEventListener("click", () => {
       if (readOnlyMode) return;
-      const loaded = builder.loadNamedRoom(room.id);
-      if (!loaded) return;
-      if (roomName) roomName.value = loaded.name;
-      restoreShadowMode();
-      renderRoomSize();
-      renderLightingControls();
-      renderRoomList(builder.getSavedRooms());
-      renderBuildingRoomList(builder.getSavedRooms());
-      zoomToBuildingView();
-      flash(`Entered ${room.name}`);
+      const current = builder.getCurrentRoomId();
+      if (room.id === current || builder.getConnectedRoomIds().includes(room.id)) {
+        enterRoom(room.id);
+      } else {
+        builder.connectBuildingRooms(current ?? room.id, room.id);
+        builder.refreshBuildingOverview(builder.getSavedRooms());
+        renderBuildingRoomList(builder.getSavedRooms());
+        flash(`Connected ${room.name}`);
+      }
     });
     row.append(button);
     buildingRoomList.append(row);

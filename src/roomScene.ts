@@ -185,6 +185,11 @@ export type SavedRoom = {
   style: RoomStyle;
 };
 
+export type BuildingLayout = {
+  positions: Record<string, Vec2>;
+  connections: Array<{ a: string; b: string }>;
+};
+
 type MonitorFeed = {
   canvas: HTMLCanvasElement;
   context: CanvasRenderingContext2D;
@@ -197,6 +202,7 @@ type MonitorFeed = {
 const STORAGE_SCENE = "iso-office-builder-scene-v3";
 const STORAGE_ASSETS = "iso-office-builder-assets-v1";
 const STORAGE_ROOMS = "iso-office-builder-rooms-v1";
+const STORAGE_BUILDING = "iso-office-builder-building-v1";
 const GRID = 0.5;
 const FINE_GRID = 0.05;
 const HEIGHT_GRID = 0.1;
@@ -307,6 +313,7 @@ export class RoomBuilder {
   private shellGroup = new THREE.Group();
   private buildingGroup = new THREE.Group();
   private buildingMode = false;
+  private selectedBuildingRoomId: string | null = null;
   private sunlightGroup = new THREE.Group();
   private sunLight?: any;
   private hemiLight?: any;
@@ -416,11 +423,75 @@ export class RoomBuilder {
 
   hideBuildingOverview() {
     this.buildingMode = false;
+    this.selectedBuildingRoomId = null;
     this.buildingGroup.clear();
   }
 
   refreshBuildingOverview(rooms = loadRooms()) {
     if (this.buildingMode) this.rebuildBuildingOverview(rooms);
+  }
+
+  isBuildingMode() {
+    return this.buildingMode;
+  }
+
+  getBuildingObjects() {
+    return this.buildingMode ? [this.buildingGroup] : [];
+  }
+
+  getBuildingLayout() {
+    return loadBuildingLayout();
+  }
+
+  getSelectedBuildingRoomId() {
+    return this.selectedBuildingRoomId;
+  }
+
+  selectBuildingRoomFromObject(object: any) {
+    let cursor = object;
+    while (cursor) {
+      if (cursor.userData?.buildingRoomId) {
+        this.selectedBuildingRoomId = cursor.userData.buildingRoomId as string;
+        this.refreshBuildingOverview();
+        return this.selectedBuildingRoomId;
+      }
+      cursor = cursor.parent;
+    }
+    this.selectedBuildingRoomId = null;
+    this.refreshBuildingOverview();
+    return null;
+  }
+
+  moveBuildingRoom(id: string, position: Vec2) {
+    const layout = loadBuildingLayout();
+    layout.positions[id] = snapForKind("desk", position);
+    saveBuildingLayout(layout);
+    this.refreshBuildingOverview();
+  }
+
+  connectBuildingRooms(a: string, b: string) {
+    if (!a || !b || a === b) return loadBuildingLayout();
+    const layout = loadBuildingLayout();
+    const exists = layout.connections.some((link) => sameConnection(link, a, b));
+    if (!exists) layout.connections.push({ a, b });
+    saveBuildingLayout(layout);
+    this.refreshBuildingOverview();
+    return layout;
+  }
+
+  disconnectBuildingRooms(a: string, b: string) {
+    const layout = loadBuildingLayout();
+    layout.connections = layout.connections.filter((link) => !sameConnection(link, a, b));
+    saveBuildingLayout(layout);
+    this.refreshBuildingOverview();
+    return layout;
+  }
+
+  getConnectedRoomIds(id = this.currentRoomId ?? "") {
+    const layout = loadBuildingLayout();
+    return layout.connections
+      .filter((link) => link.a === id || link.b === id)
+      .map((link) => (link.a === id ? link.b : link.a));
   }
 
   exportRoom(name = "Shared room"): SavedRoom {
@@ -1265,17 +1336,26 @@ export class RoomBuilder {
 
   private rebuildBuildingOverview(rooms: SavedRoom[]) {
     this.buildingGroup.clear();
-    const savedRooms = rooms.filter((room) => room.id !== this.currentRoomId);
+    const layout = normalizeBuildingLayout(rooms, loadBuildingLayout(), this.currentRoomId);
+    saveBuildingLayout(layout);
     const activeMetrics = roomMetrics(this.roomStyle);
     const cellX = Math.max(5.6, activeMetrics.width + 1.3);
     const cellZ = Math.max(4.6, activeMetrics.depth + 1.3);
+    if (this.currentRoomId && !layout.positions[this.currentRoomId]) layout.positions[this.currentRoomId] = { x: 0, z: 0 };
+    const savedRooms = rooms.filter((room) => room.id !== this.currentRoomId);
     const previewSlots = buildingPreviewSlots(savedRooms.length, cellX, cellZ);
     for (const [index, room] of savedRooms.entries()) {
-      const slot = previewSlots[index];
-      const preview = makeBuildingRoomPreview(room, slot, false);
+      const slot = layout.positions[room.id] ?? previewSlots[index] ?? { x: 0, z: 0 };
+      const preview = makeBuildingRoomPreview(room, slot, false, room.id === this.selectedBuildingRoomId);
       this.buildingGroup.add(preview);
-      const link = makeRoomConnector(slot);
-      if (link) this.buildingGroup.add(link);
+    }
+    const roomsById = new Map(rooms.map((room) => [room.id, room]));
+    for (const link of layout.connections) {
+      const a = layout.positions[link.a];
+      const b = layout.positions[link.b];
+      if (!a || !b || !roomsById.has(link.a) || !roomsById.has(link.b)) continue;
+      const connector = makeRoomConnectorBetween(a, b, link.a === this.currentRoomId || link.b === this.currentRoomId);
+      if (connector) this.buildingGroup.add(connector);
     }
     const activeHalo = makeActiveRoomHalo(activeMetrics);
     this.buildingGroup.add(activeHalo);
@@ -1318,7 +1398,7 @@ export class RoomBuilder {
 
   private addRoomShell() {
     this.scene.background = new THREE.Color(this.roomStyle.background);
-    this.scene.fog = new THREE.Fog(this.roomStyle.background, 13, 36);
+    this.scene.fog = null;
     this.shellGroup = new THREE.Group();
     this.scene.add(this.shellGroup);
     this.buildRoomShell(this.shellGroup, this.roomStyle);
@@ -1461,26 +1541,26 @@ function buildingPreviewSlots(count: number, cellX: number, cellZ: number) {
   return slots;
 }
 
-function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean) {
+function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean, selected = false) {
   const style = normalizeRoomStyle(room.style);
   const metrics = roomMetrics(style);
   const group = new THREE.Group();
   group.position.set(offset.x, 0, offset.z);
   group.userData.roomId = room.id;
   const floorMat = new THREE.MeshStandardMaterial({
-    color: active ? style.floor : "#252b28",
+    color: selected ? "#355343" : active ? style.floor : "#252b28",
     roughness: 0.78,
     transparent: true,
     opacity: active ? 0.7 : 0.62,
   });
   const wallMat = new THREE.MeshStandardMaterial({
-    color: active ? style.wallB : "#141817",
+    color: selected ? "#254031" : active ? style.wallB : "#141817",
     roughness: 0.82,
     transparent: true,
     opacity: active ? 0.46 : 0.52,
   });
   const trimMat = new THREE.MeshStandardMaterial({
-    color: active ? "#9bdab7" : "#4c5f56",
+    color: selected ? "#89ffc0" : active ? "#9bdab7" : "#4c5f56",
     roughness: 0.7,
     transparent: true,
     opacity: active ? 0.9 : 0.72,
@@ -1514,6 +1594,7 @@ function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean)
     child.castShadow = false;
     child.receiveShadow = false;
     child.userData.pickable = false;
+    child.userData.buildingRoomId = room.id;
   });
   return group;
 }
@@ -1533,13 +1614,16 @@ function makeActiveRoomHalo(metrics: ReturnType<typeof roomMetrics>) {
   return group;
 }
 
-function makeRoomConnector(slot: Vec2) {
-  if (Math.abs(slot.x) < 0.1 && Math.abs(slot.z) < 0.1) return null;
-  const length = Math.max(0.5, Math.hypot(slot.x, slot.z) - 3.1);
-  const material = new THREE.MeshBasicMaterial({ color: "#6f806f", transparent: true, opacity: 0.34, depthWrite: false });
+function makeRoomConnectorBetween(a: Vec2, b: Vec2, active: boolean) {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const distance = Math.hypot(dx, dz);
+  if (distance < 0.1) return null;
+  const length = Math.max(0.5, distance - 2.4);
+  const material = new THREE.MeshBasicMaterial({ color: active ? "#8ff6bd" : "#6f806f", transparent: true, opacity: active ? 0.5 : 0.34, depthWrite: false });
   const connector = box(0.28, 0.022, length, material);
-  connector.position.set(slot.x * 0.5, 0.018, slot.z * 0.5);
-  connector.rotation.y = Math.atan2(slot.x, slot.z);
+  connector.position.set(a.x + dx * 0.5, 0.018, a.z + dz * 0.5);
+  connector.rotation.y = Math.atan2(dx, dz);
   return connector;
 }
 
@@ -3751,6 +3835,47 @@ function loadRooms(): SavedRoom[] {
 
 function saveRooms(rooms: SavedRoom[]) {
   localStorage.setItem(STORAGE_ROOMS, JSON.stringify(rooms));
+}
+
+function loadBuildingLayout(): BuildingLayout {
+  const raw = localStorage.getItem(STORAGE_BUILDING);
+  const layout = raw ? safeParse<BuildingLayout>(raw) : null;
+  return {
+    positions: layout?.positions ?? {},
+    connections: Array.isArray(layout?.connections) ? layout.connections : [],
+  };
+}
+
+function saveBuildingLayout(layout: BuildingLayout) {
+  localStorage.setItem(STORAGE_BUILDING, JSON.stringify(layout));
+}
+
+function normalizeBuildingLayout(rooms: SavedRoom[], layout: BuildingLayout, currentRoomId: string | null): BuildingLayout {
+  const roomIds = new Set(rooms.map((room) => room.id));
+  const next: BuildingLayout = { positions: {}, connections: [] };
+  const activeMetrics = roomMetrics(rooms.find((room) => room.id === currentRoomId)?.style ?? createRoomStyle());
+  const slots = buildingPreviewSlots(rooms.length, Math.max(5.6, activeMetrics.width + 1.3), Math.max(4.6, activeMetrics.depth + 1.3));
+  let slotIndex = 0;
+  for (const room of rooms) {
+    if (layout.positions[room.id]) {
+      next.positions[room.id] = layout.positions[room.id];
+    } else if (room.id === currentRoomId) {
+      next.positions[room.id] = { x: 0, z: 0 };
+    } else {
+      next.positions[room.id] = slots[slotIndex++] ?? { x: 0, z: 0 };
+    }
+  }
+  next.connections = layout.connections.filter((link, index, links) => (
+    roomIds.has(link.a)
+    && roomIds.has(link.b)
+    && link.a !== link.b
+    && links.findIndex((candidate) => sameConnection(candidate, link.a, link.b)) === index
+  ));
+  return next;
+}
+
+function sameConnection(link: { a: string; b: string }, a: string, b: string) {
+  return (link.a === a && link.b === b) || (link.a === b && link.b === a);
 }
 
 const MODEL_DB = "iso-room-builder-models";
