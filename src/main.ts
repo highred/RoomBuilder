@@ -820,6 +820,8 @@ function renderBuildingRoomList(rooms: SavedRoom[]) {
     return;
   }
   for (const room of rooms) {
+    if (!room?.id) continue;
+    const isConnected = builder.getConnectedRoomIds().includes(room.id);
     const row = document.createElement("div");
     row.className = "room-row";
     const button = document.createElement("button");
