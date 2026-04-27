@@ -97,7 +97,6 @@ let didDrag = false;
 let draggingBuildingRoomId: string | null = null;
 let buildingDidDrag = false;
 let buildingPointerStart = { x: 0, y: 0 };
-let pendingConnectionRoomId: string | null = null;
 let boxSelecting = false;
 let boxDidDrag = false;
 let boxStart = { x: 0, y: 0 };
@@ -265,7 +264,6 @@ document.querySelector<HTMLButtonElement>("#newRoom")?.addEventListener("click",
 });
 document.querySelector<HTMLButtonElement>("#showBuilding")?.addEventListener("click", () => {
   builder.showBuildingOverview(builder.getSavedRooms());
-  pendingConnectionRoomId = null;
   renderBuildingRoomList(builder.getSavedRooms());
   renderConnectedRooms();
   zoomToBuildingView();
@@ -273,7 +271,6 @@ document.querySelector<HTMLButtonElement>("#showBuilding")?.addEventListener("cl
 });
 document.querySelector<HTMLButtonElement>("#hideBuilding")?.addEventListener("click", () => {
   builder.hideBuildingOverview();
-  pendingConnectionRoomId = null;
   renderBuildingRoomList(builder.getSavedRooms());
   renderConnectedRooms();
   flash("Returned to active room");
@@ -285,39 +282,38 @@ document.querySelector<HTMLButtonElement>("#refreshBuilding")?.addEventListener(
   flash("Floorplan refreshed");
 });
 document.querySelector<HTMLButtonElement>("#connectRoom")?.addEventListener("click", () => {
-  const selected = builder.getSelectedBuildingRoomId();
-  if (!selected) {
-    flash("Select a room outline first");
+  const selected = builder.getSelectedBuildingRoomIds();
+  if (selected.length < 2) {
+    flash("Select at least two room outlines");
     return;
   }
-  pendingConnectionRoomId = selected;
-  renderBuildingRoomList(builder.getSavedRooms());
-  flash("Link start set. Select another room, then connect or disconnect.");
-});
-document.querySelector<HTMLButtonElement>("#disconnectRoom")?.addEventListener("click", () => {
-  const selected = builder.getSelectedBuildingRoomId();
-  if (!selected || !pendingConnectionRoomId || selected === pendingConnectionRoomId) {
-    flash("Set a link start, then select a different room");
-    return;
-  }
-  if (builder.areBuildingRoomsConnected(pendingConnectionRoomId, selected)) {
-    builder.disconnectBuildingRooms(pendingConnectionRoomId, selected);
-    flash("Rooms disconnected");
-  } else {
-    builder.connectBuildingRooms(pendingConnectionRoomId, selected);
-    flash("Rooms connected");
-  }
-  pendingConnectionRoomId = selected;
+  forEachSelectedRoomPair(selected, (a, b) => builder.connectBuildingRooms(a, b));
   renderBuildingRoomList(builder.getSavedRooms());
   renderConnectedRooms();
+  flash("Selected rooms connected");
 });
-document.querySelector<HTMLButtonElement>("#enterConnectedRoom")?.addEventListener("click", () => {
-  const selected = builder.getSelectedBuildingRoomId();
-  if (!selected) {
-    flash("Select a room outline first");
+document.querySelector<HTMLButtonElement>("#disconnectRoom")?.addEventListener("click", () => {
+  const selected = builder.getSelectedBuildingRoomIds();
+  if (selected.length < 2) {
+    flash("Select at least two connected room outlines");
     return;
   }
-  enterRoom(selected);
+  forEachSelectedRoomPair(selected, (a, b) => builder.disconnectBuildingRooms(a, b));
+  renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
+  flash("Selected room connections removed");
+});
+document.querySelector<HTMLButtonElement>("#clearConnections")?.addEventListener("click", () => {
+  builder.clearBuildingConnections();
+  renderBuildingRoomList(builder.getSavedRooms());
+  renderConnectedRooms();
+  flash("All room connections cleared");
+});
+document.querySelector<HTMLButtonElement>("#rotateRoomLeft")?.addEventListener("click", () => {
+  rotateSelectedBuildingRooms(-90);
+});
+document.querySelector<HTMLButtonElement>("#rotateRoomRight")?.addEventListener("click", () => {
+  rotateSelectedBuildingRooms(90);
 });
 document.querySelector<HTMLButtonElement>("#copyShareLink")?.addEventListener("click", async () => {
   const room = builder.exportRoom(roomName?.value ?? "Shared room");
@@ -447,14 +443,13 @@ renderer.domElement.addEventListener("pointerdown", (event: PointerEvent) => {
   if (builder.isBuildingMode()) {
     const roomHits = raycaster.intersectObjects(builder.getBuildingObjects(), true);
     if (roomHits.length) {
-      const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
+      const roomId = builder.getBuildingRoomIdFromObject(roomHits[0].object);
       if (roomId) {
         draggingBuildingRoomId = roomId;
         buildingDidDrag = false;
         buildingPointerStart = { x: event.clientX, y: event.clientY };
         controls.enabled = false;
         renderer.domElement.setPointerCapture(event.pointerId);
-        renderBuildingRoomList(builder.getSavedRooms());
         return;
       }
     }
@@ -483,8 +478,11 @@ renderer.domElement.addEventListener("dblclick", (event: MouseEvent) => {
   if (builder.isBuildingMode()) {
     const roomHits = raycaster.intersectObjects(builder.getBuildingObjects(), true);
     if (roomHits.length) {
-      const roomId = builder.selectBuildingRoomFromObject(roomHits[0].object);
-      if (roomId) enterRoom(roomId);
+      const roomId = builder.getBuildingRoomIdFromObject(roomHits[0].object);
+      if (roomId) {
+        builder.toggleBuildingRoomSelection(roomId);
+        renderBuildingRoomList(builder.getSavedRooms());
+      }
       return;
     }
   }
@@ -541,7 +539,9 @@ renderer.domElement.addEventListener("pointerup", (event: PointerEvent) => {
     if (buildingDidDrag) {
       flash("Room placement saved");
     } else {
-      enterRoom(roomId);
+      builder.toggleBuildingRoomSelection(roomId);
+      renderBuildingRoomList(builder.getSavedRooms());
+      flash("Room outline selection updated");
     }
     return;
   }
@@ -703,6 +703,23 @@ function zoomToRoomView() {
   };
 }
 
+function forEachSelectedRoomPair(roomIds: string[], action: (a: string, b: string) => void) {
+  for (let i = 0; i < roomIds.length; i += 1) {
+    for (let j = i + 1; j < roomIds.length; j += 1) action(roomIds[i], roomIds[j]);
+  }
+}
+
+function rotateSelectedBuildingRooms(deltaDegrees: number) {
+  const selected = builder.getSelectedBuildingRoomIds();
+  if (!selected.length) {
+    flash("Select a room outline first");
+    return;
+  }
+  for (const id of selected) builder.rotateBuildingRoom(id, deltaDegrees);
+  renderBuildingRoomList(builder.getSavedRooms());
+  flash("Selected room outline rotated");
+}
+
 function enterRoom(roomId: string) {
   const room = builder.getSavedRooms().find((entry) => entry.id === roomId);
   const loaded = builder.loadNamedRoom(roomId);
@@ -836,11 +853,12 @@ function renderRoomList(rooms: SavedRoom[]) {
   for (const room of rooms) {
     if (!room?.id) continue;
     const isConnected = builder.getConnectedRoomIds().includes(room.id);
+    const isSelected = builder.getSelectedBuildingRoomIds().includes(room.id);
     const row = document.createElement("div");
     row.className = "room-row";
     const button = document.createElement("button");
     button.className = "room-tile";
-    button.classList.toggle("active", room.id === builder.getCurrentRoomId());
+    button.classList.toggle("active", isSelected || (!builder.isBuildingMode() && room.id === builder.getCurrentRoomId()));
     button.type = "button";
     button.innerHTML = `<span>${room.name}</span><small>${new Date(room.savedAt).toLocaleDateString()}</small>`;
     button.addEventListener("click", () => {
@@ -896,9 +914,9 @@ function renderBuildingRoomList(rooms: SavedRoom[]) {
     button.addEventListener("click", () => {
       if (readOnlyMode) return;
       if (builder.isBuildingMode()) {
-        builder.selectBuildingRoom(room.id);
+        builder.toggleBuildingRoomSelection(room.id);
         renderBuildingRoomList(builder.getSavedRooms());
-        flash(`Selected ${room.name || "room"}`);
+        flash(`${isSelected ? "Deselected" : "Selected"} ${room.name || "room"}`);
       } else if (isConnected) {
         enterRoom(room.id);
       } else {

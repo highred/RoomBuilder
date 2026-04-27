@@ -187,6 +187,7 @@ export type SavedRoom = {
 
 export type BuildingLayout = {
   positions: Record<string, Vec2>;
+  rotations: Record<string, number>;
   connections: Array<{ a: string; b: string }>;
 };
 
@@ -315,6 +316,7 @@ export class RoomBuilder {
   private buildingGridGroup = new THREE.Group();
   private buildingMode = false;
   private selectedBuildingRoomId: string | null = null;
+  private selectedBuildingRoomIds = new Set<string>();
   private sunlightGroup = new THREE.Group();
   private sunLight?: any;
   private hemiLight?: any;
@@ -439,6 +441,7 @@ export class RoomBuilder {
   hideBuildingOverview() {
     this.buildingMode = false;
     this.selectedBuildingRoomId = null;
+    this.selectedBuildingRoomIds.clear();
     this.buildingGroup.clear();
     this.buildingGridGroup.clear();
     this.buildingGridGroup.visible = false;
@@ -474,29 +477,53 @@ export class RoomBuilder {
     return this.selectedBuildingRoomId;
   }
 
+  getSelectedBuildingRoomIds() {
+    return [...this.selectedBuildingRoomIds];
+  }
+
   selectBuildingRoom(id: string | null) {
     this.selectedBuildingRoomId = id;
+    this.selectedBuildingRoomIds.clear();
+    if (id) this.selectedBuildingRoomIds.add(id);
     this.refreshBuildingOverview();
   }
 
-  selectBuildingRoomFromObject(object: any) {
+  toggleBuildingRoomSelection(id: string) {
+    if (this.selectedBuildingRoomIds.has(id)) {
+      this.selectedBuildingRoomIds.delete(id);
+    } else {
+      this.selectedBuildingRoomIds.add(id);
+    }
+    this.selectedBuildingRoomId = [...this.selectedBuildingRoomIds].at(-1) ?? null;
+    this.refreshBuildingOverview();
+    return this.getSelectedBuildingRoomIds();
+  }
+
+  getBuildingRoomIdFromObject(object: any) {
     let cursor = object;
     while (cursor) {
-      if (cursor.userData?.buildingRoomId) {
-        this.selectedBuildingRoomId = cursor.userData.buildingRoomId as string;
-        this.refreshBuildingOverview();
-        return this.selectedBuildingRoomId;
-      }
+      if (cursor.userData?.buildingRoomId) return cursor.userData.buildingRoomId as string;
       cursor = cursor.parent;
     }
-    this.selectedBuildingRoomId = null;
-    this.refreshBuildingOverview();
     return null;
+  }
+
+  selectBuildingRoomFromObject(object: any) {
+    const id = this.getBuildingRoomIdFromObject(object);
+    this.selectBuildingRoom(id);
+    return id;
   }
 
   moveBuildingRoom(id: string, position: Vec2) {
     const layout = loadBuildingLayout();
     layout.positions[id] = snapForKind("desk", position);
+    saveBuildingLayout(layout);
+    this.refreshBuildingOverview();
+  }
+
+  rotateBuildingRoom(id: string, deltaDegrees: number) {
+    const layout = loadBuildingLayout();
+    layout.rotations[id] = normalizeDegrees((layout.rotations[id] ?? 0) + deltaDegrees);
     saveBuildingLayout(layout);
     this.refreshBuildingOverview();
   }
@@ -521,6 +548,14 @@ export class RoomBuilder {
 
   areBuildingRoomsConnected(a: string, b: string) {
     return loadBuildingLayout().connections.some((link) => sameConnection(link, a, b));
+  }
+
+  clearBuildingConnections() {
+    const layout = loadBuildingLayout();
+    layout.connections = [];
+    saveBuildingLayout(layout);
+    this.refreshBuildingOverview();
+    return layout;
   }
 
   getConnectedRoomIds(id = this.currentRoomId ?? "") {
@@ -1389,7 +1424,13 @@ export class RoomBuilder {
     this.buildingGridGroup.add(makeBuildingGrid(rooms, layout));
     for (const [index, room] of rooms.entries()) {
       const slot = layout.positions[room.id] ?? previewSlots[index] ?? { x: 0, z: 0 };
-      const preview = makeBuildingRoomPreview(room, slot, false, room.id === this.selectedBuildingRoomId);
+      const preview = makeBuildingRoomPreview(
+        room,
+        slot,
+        layout.rotations[room.id] ?? 0,
+        false,
+        this.selectedBuildingRoomIds.has(room.id),
+      );
       this.buildingGroup.add(preview);
     }
     const roomsById = new Map(rooms.map((room) => [room.id, room]));
@@ -1605,11 +1646,12 @@ function makeBuildingGrid(rooms: SavedRoom[], layout: BuildingLayout) {
   return group;
 }
 
-function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, active: boolean, selected = false) {
+function makeBuildingRoomPreview(room: SavedRoom, offset: Vec2, rotationDegrees: number, active: boolean, selected = false) {
   const style = normalizeRoomStyle(room.style);
   const metrics = roomMetrics(style);
   const group = new THREE.Group();
   group.position.set(offset.x, 0, offset.z);
+  group.rotation.y = THREE.MathUtils.degToRad(rotationDegrees);
   group.userData.roomId = room.id;
   const floorMat = new THREE.MeshStandardMaterial({
     color: selected ? "#355343" : active ? style.floor : "#252b28",
@@ -3906,6 +3948,7 @@ function loadBuildingLayout(): BuildingLayout {
   const layout = raw ? safeParse<BuildingLayout>(raw) : null;
   return {
     positions: sanitizeBuildingPositions(layout?.positions),
+    rotations: sanitizeBuildingRotations(layout?.rotations),
     connections: sanitizeBuildingConnections(layout?.connections),
   };
 }
@@ -3916,7 +3959,7 @@ function saveBuildingLayout(layout: BuildingLayout) {
 
 function normalizeBuildingLayout(rooms: SavedRoom[], layout: BuildingLayout, currentRoomId: string | null): BuildingLayout {
   const roomIds = new Set(rooms.map((room) => room.id));
-  const next: BuildingLayout = { positions: {}, connections: [] };
+  const next: BuildingLayout = { positions: {}, rotations: {}, connections: [] };
   const activeMetrics = roomMetrics(rooms.find((room) => room.id === currentRoomId)?.style ?? createRoomStyle());
   const slots = buildingPreviewSlots(rooms.length, Math.max(5.6, activeMetrics.width + 1.3), Math.max(4.6, activeMetrics.depth + 1.3));
   let slotIndex = 0;
@@ -3928,6 +3971,7 @@ function normalizeBuildingLayout(rooms: SavedRoom[], layout: BuildingLayout, cur
     } else {
       next.positions[room.id] = slots[slotIndex++] ?? { x: 0, z: 0 };
     }
+    next.rotations[room.id] = normalizeDegrees(layout.rotations[room.id] ?? 0);
   }
   next.connections = layout.connections.filter((link, index, links) => (
     roomIds.has(link.a)
@@ -3949,6 +3993,16 @@ function sanitizeBuildingPositions(positions?: Record<string, Vec2>): Record<str
     if (!id || !position || typeof position.x !== "number" || typeof position.z !== "number") continue;
     if (!Number.isFinite(position.x) || !Number.isFinite(position.z)) continue;
     next[id] = { x: position.x, z: position.z };
+  }
+  return next;
+}
+
+function sanitizeBuildingRotations(rotations?: Record<string, number>): Record<string, number> {
+  const next: Record<string, number> = {};
+  if (!rotations || typeof rotations !== "object") return next;
+  for (const [id, rotation] of Object.entries(rotations)) {
+    if (!id || typeof rotation !== "number" || !Number.isFinite(rotation)) continue;
+    next[id] = normalizeDegrees(rotation);
   }
   return next;
 }
