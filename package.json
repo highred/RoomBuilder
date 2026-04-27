@@ -1,0 +1,17 @@
+{
+  "name": "immersive-office-3d",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vite": "^6.3.0",
+    "typescript": "^5.8.3",
+    "three": "^0.175.0"
+  },
+  "devDependencies": {}
+}

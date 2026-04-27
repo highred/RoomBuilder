@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interactive 3D Studio</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+      <aside class="library-panel" aria-label="Room builder library">
+        <div class="brand">
+          <span>IsoForge</span>
+          <strong>Room Builder</strong>
+        </div>
+
+        <details>
+          <summary>Prompt Generator</summary>
+          <div class="generator">
+            <input id="assetPrompt" type="text" placeholder="e.g. brass desk fan, mossy lamp, red modem" />
+            <button id="generateAsset" class="wide-action" type="button">Generate Asset</button>
+            <label class="file-import">
+              <span>Import 3D Model</span>
+              <input id="modelImport" type="file" accept=".glb,.gltf,.obj,.stl,model/gltf-binary,model/gltf+json" />
+            </label>
+          </div>
+        </details>
+
+        <details>
+          <summary>Permanent Assets</summary>
+          <div id="assetGrid" class="asset-grid"></div>
+        </details>
+
+        <details open>
+          <summary>Performance</summary>
+          <div class="generator">
+            <div id="perfPanel" class="perf-panel">
+              <span>FPS <b id="perfFps">--</b></span>
+              <span>Items <b id="perfItems">--</b></span>
+              <span>Draws <b id="perfDraws">--</b></span>
+              <span>Tris <b id="perfTris">--</b></span>
+            </div>
+            <button id="addBenchmarkItems" class="wide-action" type="button">Add 25 Test Items</button>
+            <button id="togglePerfHud" class="wide-action" type="button">Toggle FPS HUD</button>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Lighting</summary>
+          <div class="generator">
+            <label class="range-control">
+              <span>Sun angle</span>
+              <input id="sunAzimuth" type="range" min="0" max="360" step="1" value="38" />
+            </label>
+            <label class="range-control">
+              <span>Sun height</span>
+              <input id="sunElevation" type="range" min="12" max="80" step="1" value="42" />
+            </label>
+            <label class="range-control">
+              <span>Sun power</span>
+              <input id="sunIntensity" type="range" min="0" max="5" step="0.1" value="3.2" />
+            </label>
+            <label class="range-control">
+              <span>Interior light</span>
+              <input id="interiorLight" type="range" min="0" max="3" step="0.1" value="1.2" />
+            </label>
+            <label class="toggle-control">
+              <span>Roof mode</span>
+              <input id="roofMode" type="checkbox" />
+            </label>
+          </div>
+        </details>
+
+        <details open>
+          <summary>Rooms</summary>
+          <div class="generator">
+            <input id="roomName" type="text" placeholder="Name this room" />
+            <div class="dimension-grid">
+              <label>
+                <span>Width ft</span>
+                <input id="roomWidth" type="number" min="6" max="40" step="0.5" value="20" />
+              </label>
+              <label>
+                <span>Depth ft</span>
+                <input id="roomDepth" type="number" min="6" max="40" step="0.5" value="15" />
+              </label>
+            </div>
+            <button id="newRoom" class="wide-action" type="button">New Room</button>
+            <button id="applyRoomSize" class="wide-action" type="button">Apply Room Size</button>
+            <button id="undoRoom" class="wide-action" type="button">Undo</button>
+            <button id="saveRoom" class="wide-action" type="button">Save Room</button>
+            <button id="saveNamedRoom" class="wide-action" type="button">Save Named Room</button>
+            <button id="copyShareLink" class="wide-action" type="button">Copy Read-only Link</button>
+            <button id="setExportFolder" class="wide-action" type="button">Set Export Folder</button>
+            <button id="exportScreenshot" class="wide-action" type="button">Export Screenshot</button>
+            <button id="exportOrbitClip" class="wide-action" type="button">Export Orbit Clip</button>
+            <button id="exportRoomData" class="wide-action" type="button">Export Room Data</button>
+            <button id="randomRoom" class="wide-action" type="button">Randomize Room Shell</button>
+            <button id="resetDemo" class="wide-action" type="button">Demo Layout</button>
+            <button id="clearRoom" class="wide-action" type="button">Clear</button>
+          </div>
+          <div id="roomList" class="room-list"></div>
+        </details>
+
+        <details>
+          <summary>Office</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="officeDesk">Office Desk</button>
+            <button type="button" data-add="lDesk">L Desk</button>
+            <button type="button" data-add="cornerDesk">Corner Desk</button>
+            <button type="button" data-add="dataKiosk">Data Kiosk</button>
+            <button type="button" data-add="standingDesk">Standing Desk</button>
+            <button type="button" data-add="workbench">Workbench</button>
+            <button type="button" data-add="conferenceTable">Conference Table</button>
+            <button type="button" data-add="receptionDesk">Reception Desk</button>
+            <button type="button" data-add="credenza">Credenza</button>
+            <button type="button" data-add="rollingCart">Rolling Cart</button>
+            <button type="button" data-add="taskChair">Task Chair</button>
+            <button type="button" data-add="wheeledChair">Wheeled Chair</button>
+            <button type="button" data-add="tallChair">Tall Chair</button>
+            <button type="button" data-add="draftingChair">Drafting Chair</button>
+            <button type="button" data-add="armChair">Chair With Arms</button>
+            <button type="button" data-add="recliner">Recliner</button>
+            <button type="button" data-add="stool">Stool</button>
+            <button type="button" data-add="loungeChair">Lounge Chair</button>
+            <button type="button" data-add="whiteboard">Whiteboard</button>
+            <button type="button" data-add="projector">Projector</button>
+            <button type="button" data-add="divider">Glass Divider</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Laboratory</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="labBench">Lab Bench</button>
+            <button type="button" data-add="lightedLabBench">Lighted Bench</button>
+            <button type="button" data-add="balanceScale">Balance</button>
+            <button type="button" data-add="analyticalBalance">Analytical Balance</button>
+            <button type="button" data-add="ulM">ULM</button>
+            <button type="button" data-add="cmm">CMM</button>
+            <button type="button" data-add="cmmWorkstation">CMM Workstation</button>
+            <button type="button" data-add="surfacePlate">Surface Plate</button>
+            <button type="button" data-add="calibrationWeights">Weights</button>
+            <button type="button" data-add="microscope">Microscope</button>
+            <button type="button" data-add="oscilloscope">Oscilloscope</button>
+            <button type="button" data-add="caliperSet">Calipers</button>
+            <button type="button" data-add="toolChest">Tool Chest</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Bedroom</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="bed">Bed</button>
+            <button type="button" data-add="nightstand">Nightstand</button>
+            <button type="button" data-add="dresser">Dresser</button>
+            <button type="button" data-add="wardrobe">Wardrobe</button>
+            <button type="button" data-add="vanity">Vanity</button>
+            <button type="button" data-add="bedsideLamp">Bedside Lamp</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Dining</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="diningTable">Dining Table</button>
+            <button type="button" data-add="diningChair">Dining Chair</button>
+            <button type="button" data-add="kitchenChair">Kitchen Chair</button>
+            <button type="button" data-add="barStool">Bar Stool</button>
+            <button type="button" data-add="buffet">Buffet</button>
+            <button type="button" data-add="pendantLight">Pendant Light</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Kitchen</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="kitchenIsland">Kitchen Island</button>
+            <button type="button" data-add="cabinetCounter">Counter</button>
+            <button type="button" data-add="sink">Sink</button>
+            <button type="button" data-add="stove">Stove</button>
+            <button type="button" data-add="fridge">Fridge</button>
+            <button type="button" data-add="microwave">Microwave</button>
+            <button type="button" data-add="toaster">Toaster</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Bathroom</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="bathtub">Bathtub</button>
+            <button type="button" data-add="toilet">Toilet</button>
+            <button type="button" data-add="bathroomSink">Bath Sink</button>
+            <button type="button" data-add="shower">Shower</button>
+            <button type="button" data-add="mirror">Mirror</button>
+            <button type="button" data-add="towelRack">Towel Rack</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Family Room</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="sofa">Sofa</button>
+            <button type="button" data-add="sectional">Sectional</button>
+            <button type="button" data-add="ottoman">Ottoman</button>
+            <button type="button" data-add="coffeeTable">Coffee Table</button>
+            <button type="button" data-add="sideTable">Side Table</button>
+            <button type="button" data-add="tvStand">TV Stand</button>
+            <button type="button" data-add="wallTv">Wall TV</button>
+            <button type="button" data-add="standTv">Stand TV</button>
+            <button type="button" data-add="aquariumShelf">Aquarium Shelf</button>
+            <button type="button" data-add="lizardEnclosure">Lizard Shelf</button>
+            <button type="button" data-add="bookshelf">Bookshelf</button>
+            <button type="button" data-add="fireplace">Fireplace</button>
+            <button type="button" data-add="mediaConsole">Media Console</button>
+            <button type="button" data-add="beanBag">Bean Bag</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Desktop Items</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="monitor">Monitor</button>
+            <button type="button" data-add="laptop">Laptop</button>
+            <button type="button" data-add="tablet">Tablet</button>
+            <button type="button" data-add="keyboard">Keyboard</button>
+            <button type="button" data-add="mouse">Mouse</button>
+            <button type="button" data-add="cup">Cup</button>
+            <button type="button" data-add="pencilCup">Pencil Cup</button>
+            <button type="button" data-add="notebook">Notebook</button>
+            <button type="button" data-add="fileTray">File Tray</button>
+            <button type="button" data-add="headphones">Headphones</button>
+            <button type="button" data-add="speaker">Speaker</button>
+            <button type="button" data-add="deskFan">Desk Fan</button>
+            <button type="button" data-add="paperPile">Paper Pile</button>
+            <button type="button" data-add="bookStack">Books</button>
+            <button type="button" data-add="deskLamp">Lamp</button>
+            <button type="button" data-add="phone">Phone</button>
+            <button type="button" data-add="printer">Printer</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Room Shell</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="window">Window</button>
+            <button type="button" data-add="door">Door</button>
+            <button type="button" data-add="wallShelf">Wall Shelf</button>
+            <button type="button" data-add="switch">Switch</button>
+            <button type="button" data-add="thermostat">Thermostat</button>
+            <button type="button" data-add="fireCanister">Fire Canister</button>
+            <button type="button" data-add="exitSign">Exit Sign</button>
+            <button type="button" data-add="safetySign">Safety Sign</button>
+          </div>
+        </details>
+
+        <details>
+          <summary>Decor & Room</summary>
+          <div class="tool-grid">
+            <button type="button" data-add="shelf">Shelf</button>
+            <button type="button" data-add="wallShelf">Wall Shelf</button>
+            <button type="button" data-add="cabinet">Cabinet</button>
+            <button type="button" data-add="aquariumShelf">Aquarium Shelf</button>
+            <button type="button" data-add="lizardEnclosure">Lizard Shelf</button>
+            <button type="button" data-add="catSitting">Sitting Cat</button>
+            <button type="button" data-add="catSleeping">Sleeping Cat</button>
+            <button type="button" data-add="catStretching">Stretching Cat</button>
+            <button type="button" data-add="catLoaf">Loaf Cat</button>
+            <button type="button" data-add="plant">Plant</button>
+            <button type="button" data-add="smallPlant">Tiny Plant</button>
+            <button type="button" data-add="planterBox">Planter Box</button>
+            <button type="button" data-add="floorLamp">Floor Lamp</button>
+            <button type="button" data-add="trashBin">Trash Bin</button>
+            <button type="button" data-add="coatRack">Coat Rack</button>
+            <button type="button" data-add="storageCube">Storage Cube</button>
+            <button type="button" data-add="rug">Rug</button>
+            <button type="button" data-add="whiteboard">Whiteboard</button>
+            <button type="button" data-add="bulletinBoard">Bulletin Board</button>
+            <button type="button" data-add="acousticPanel">Acoustic Panel</button>
+            <button type="button" data-add="wallArt">Wall Art</button>
+            <button type="button" data-add="clock">Clock</button>
+            <button type="button" data-add="projector">Projector</button>
+          </div>
+        </details>
+      </aside>
+
+      <div id="selectionPanel" class="selection-panel hidden">
+        <div class="selected-card">
+          <strong id="selectedName">Nothing selected</strong>
+          <span id="selectedMeta">Click an item, then drag it across the grid.</span>
+        </div>
+        <label class="color-control">
+          <span>Color</span>
+          <input id="colorInput" type="color" value="#78938a" />
+        </label>
+        <div class="selection-actions">
+          <button id="nudgeBack" type="button">Up</button>
+          <button id="nudgeLeft" type="button">Left</button>
+          <button id="nudgeRight" type="button">Right</button>
+          <button id="nudgeForward" type="button">Down</button>
+          <button id="heightDown" type="button">Z -</button>
+          <button id="heightUp" type="button">Z +</button>
+          <button id="heightFineDown" type="button">Z - Fine</button>
+          <button id="heightFineUp" type="button">Z + Fine</button>
+          <button id="rotateLeft" type="button">Turn L</button>
+          <button id="rotateRight" type="button">Turn R</button>
+          <button id="scaleDown" type="button">Scale -</button>
+          <button id="scaleUp" type="button">Scale +</button>
+          <button id="snapSurface" type="button">Snap</button>
+          <button id="duplicate" type="button">Clone</button>
+          <button id="savePrefab" type="button">Permanent</button>
+          <button id="deleteItem" type="button">Delete</button>
+        </div>
+        <div class="rotation-row">
+          <button id="rotateMinusOne" type="button">-1 deg</button>
+          <label>
+            <span>Rotation</span>
+            <input id="rotationInput" type="number" min="0" max="359" step="1" value="0" />
+          </label>
+          <button id="rotatePlusOne" type="button">+1 deg</button>
+          <button id="snapRotation" type="button">90 deg</button>
+        </div>
+      </div>
+
+      <div class="hud">
+        <div class="title">
+          <span>Drag furniture on the grid</span>
+          <strong>Build Any Isometric Room</strong>
+        </div>
+        <div class="controls" aria-label="Camera controls">
+          <button id="zoomIn" type="button" title="Zoom in">+</button>
+          <button id="zoomOut" type="button" title="Zoom out">-</button>
+          <button id="resetView" type="button" title="Reset view">Reset</button>
+          <button id="autoOrbit" type="button" title="Toggle cinematic orbit">Orbit</button>
+        </div>
+      </div>
+      <div id="status" class="status">Ready</div>
+      <div id="perfHud" class="perf-hud">FPS -- | Items --</div>
+      <div class="hint">Set room size in feet | all items use fine placement | surfaces carry objects placed on top</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
